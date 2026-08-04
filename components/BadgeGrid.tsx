@@ -32,7 +32,7 @@ export default function BadgeGrid({ partnerId }: { partnerId: string }) {
   async function load() {
     setLoading(true);
     const [{ data: allBadges }, { data: earnedRows }, { data: entries }] = await Promise.all([
-      supabase.from('badges').select('id, name, icon, badge_type, trigger_type, trigger_value, category_filter, is_hidden').order('badge_type'),
+      supabase.from('badges').select('id, name, icon, badge_type, trigger_type, trigger_value, category_filter, is_hidden').order('sort_order'),
       supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId),
       supabase.from('point_entries').select('points, point_categories(category_tag)').eq('partner_id', partnerId),
     ]);

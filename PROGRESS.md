@@ -85,3 +85,21 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Screen nutzt exakt dieselbe `BadgeGrid`-Komponente wie das Männerprofil (kein Duplikat) –
   ohne Disconnect-Button und ohne Invite-Code, wie gefordert
 - Kein neues Datenbank-SQL für diesen Schritt nötig
+
+## Nacharbeiten nach Rollout (2026-08-05)
+- Migration 16 versehentlich in zwei Teilen ausgeführt (Schema+Delete, dann Insert) – dabei
+  ist der DELETE-Schritt für die alten Kategorien nicht durchgekommen, wodurch 16 alte
+  Kategorien neben den 34 neuen Tier-Kategorien liegen blieben (Summe 50 statt 34). Per
+  gezieltem Cleanup (`delete ... where is_global = true and tier is null`) manuell behoben,
+  keine Migration dafür nötig
+- Korrektur: der neue Kategorienkatalog hat **34** Einträge (13 Haushalt, 7 Mental Load,
+  8 Romantik, 6 Verlässlichkeit), nicht 33 wie ursprünglich im Chat gesagt
+- BadgeGrid: nicht verdiente Badges zeigten die ganze Kachel ausgegraut statt nur das Emoji –
+  gefixt, Kachel-Hintergrund und Name bleiben jetzt normal
+- "Punkte vergeben": Standard-Aufgaben waren unsortiert in einer flachen Liste – jetzt nach
+  Kategorie gruppiert (mit Überschrift je Kategorie) und innerhalb nach Tier sortiert
+- Badges hatten innerhalb eines Typs keine feste Reihenfolge (nur `order by badge_type`,
+  ohne Sekundärsortierung nicht deterministisch) – neue Spalte `badges.sort_order` mit
+  fester Reihenfolge je Typ (Meilensteine nach Schwelle, Spezialisten nach
+  Kategorie+Bronze/Silber/Gold, Konsistenz nach Dauer, Saisontitel Woche→Monat→Jahr)
+- Migration: `supabase/migrations/20260804_21_badge_sort_order.sql`
