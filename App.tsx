@@ -18,10 +18,27 @@ type Partner = { id: string; name: string };
 type Group = { id: string; name: string; invite_code: string };
 type GroupMember = { user_id: string; partner: Partner | null };
 type Category = { id: string; name: string; points: number; icon: string };
+type RankingEntry = { partner_id: string; name: string; total: number };
+type Period = 'week' | 'month' | 'year';
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
-  | 'group-detail' | 'add-points';
+  | 'group-detail' | 'add-points' | 'ranking';
+
+function getStartDate(period: Period): string {
+  const now = new Date();
+  if (period === 'week') {
+    const d = new Date(now);
+    const day = d.getDay();
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  } else if (period === 'month') {
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  } else {
+    return new Date(now.getFullYear(), 0, 1).toISOString();
+  }
+}
 
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -38,6 +55,9 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [note, setNote] = useState('');
+  const [period, setPeriod] = useState<Period>('week');
+  const [ranking, setRanking] = useState<RankingEntry[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [partnerName, setPartnerName] = useState('');
@@ -144,6 +164,26 @@ export default function App() {
     const { data } = await supabase.from('point_categories')
       .select('id, name, points, icon').eq('is_global', true).order('name');
     setCategories((data ?? []) as Category[]);
+  }
+
+  async function loadRanking(groupId: string, p: Period) {
+    setRankingLoading(true);
+    const { data: memberRows } = await supabase
+      .from('group_members').select('user_id').eq('group_id', groupId);
+    const userIds = (memberRows ?? []).map((m: any) => m.user_id);
+    const { data: partnerRows } = await supabase
+      .from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds);
+    const { data: entries } = await supabase
+      .from('point_entries').select('partner_id, points')
+      .eq('group_id', groupId).gte('created_at', getStartDate(p));
+    const totals: Record<string, number> = {};
+    (entries ?? []).forEach((e: any) => { totals[e.partner_id] = (totals[e.partner_id] || 0) + e.points; });
+    setRanking(
+      ((partnerRows ?? []) as any[])
+        .map(p => ({ partner_id: p.id, name: p.name, total: totals[p.id] || 0 }))
+        .sort((a, b) => b.total - a.total)
+    );
+    setRankingLoading(false);
   }
 
   async function handleSavePoints() {
@@ -278,10 +318,44 @@ export default function App() {
         <TouchableOpacity style={s.btn} onPress={async () => { await loadCategories(); setScreen('add-points'); }}>
           <Text style={s.btnText}>+ Punkte vergeben</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.btn, s.btnOutline, s.btnDisabled]} disabled>
-          <Text style={s.btnOutlineText}>🏆 Ranking (bald)</Text>
+        <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => { setPeriod('week'); loadRanking(selectedGroup!.id, 'week'); setScreen('ranking'); }}>
+          <Text style={s.btnOutlineText}>🏆 Ranking</Text>
         </TouchableOpacity>
       </View>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'ranking') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => setScreen('group-detail')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <Text style={s.headerTitle}>🏆 Ranking</Text>
+        <Text style={s.headerSub}>{selectedGroup?.name}</Text>
+      </View>
+      <View style={s.tabs}>
+        {(['week', 'month', 'year'] as Period[]).map(p => (
+          <TouchableOpacity key={p} style={[s.tab, period === p && s.tabActive]}
+            onPress={() => { setPeriod(p); loadRanking(selectedGroup!.id, p); }}>
+            <Text style={[s.tabText, period === p && s.tabTextActive]}>
+              {p === 'week' ? 'Woche' : p === 'month' ? 'Monat' : 'Jahr'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      {rankingLoading
+        ? <View style={s.center}><ActivityIndicator color="#3ECF8E" /></View>
+        : <FlatList data={ranking} keyExtractor={i => i.partner_id}
+            contentContainerStyle={{ padding: 16, gap: 10 }}
+            ListEmptyComponent={<Text style={s.empty}>Noch keine Punkte in diesem Zeitraum.</Text>}
+            renderItem={({ item, index }) => (
+              <View style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
+                <Text style={{ fontSize: 20, width: 32 }}>{index === 0 ? '🏆' : `${index + 1}.`}</Text>
+                <Text style={[s.cardTitle, { flex: 1 }]}>{item.name}</Text>
+                <Text style={s.pts}>{item.total} Pkt</Text>
+              </View>
+            )} />
+      }
       <StatusBar style="auto" />
     </View>
   );
@@ -346,4 +420,9 @@ const s = StyleSheet.create({
   cardSub: { fontSize: 13, color: '#aaa', marginTop: 4 },
   cardSelected: { borderWidth: 2, borderColor: '#3ECF8E' },
   pts: { fontSize: 15, fontWeight: 'bold', color: '#3ECF8E' },
+  tabs: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee' },
+  tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+  tabActive: { borderBottomWidth: 2, borderBottomColor: '#3ECF8E' },
+  tabText: { fontSize: 14, color: '#aaa' },
+  tabTextActive: { color: '#3ECF8E', fontWeight: 'bold' },
 });
