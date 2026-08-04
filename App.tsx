@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { supabase } from './lib/supabase';
 import type { Session } from '@supabase/supabase-js';
+import BadgeGrid from './components/BadgeGrid';
 
 type Partner = { id: string; name: string };
 type Group = { id: string; name: string; invite_code: string };
@@ -1298,11 +1299,20 @@ export default function App() {
         <Text style={s.headerTitle}>Mein Profil</Text>
         <Text style={s.headerSub}>{session?.user.email}</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
-        <Text style={s.sectionLabel}>Verbunden mit</Text>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 20 }}>
         {manConnections.length === 0
           ? <Text style={s.empty}>Noch keine Verbindungen aktiv.</Text>
           : manConnections.map(conn => (
+            <View key={conn.id} style={{ gap: 12 }}>
+              {manConnections.length > 1 && <Text style={s.sectionLabel}>{(conn.partners as any).name}</Text>}
+              <BadgeGrid partnerId={(conn.partners as any).id} />
+            </View>
+          ))
+        }
+
+        <View style={{ gap: 12 }}>
+          <Text style={s.sectionLabel}>Verbunden mit</Text>
+          {manConnections.map(conn => (
             <View key={conn.id} style={s.card}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View style={{ flex: 1 }}>
@@ -1315,11 +1325,11 @@ export default function App() {
                 </TouchableOpacity>
               </View>
             </View>
-          ))
-        }
-        <TouchableOpacity style={[s.btn, s.btnOutline, { marginTop: 8 }]} onPress={() => setScreen('enter-invite-code')}>
-          <Text style={s.btnOutlineText}>+ Weiteren Code eingeben</Text>
-        </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setScreen('enter-invite-code')}>
+            <Text style={s.btnOutlineText}>+ Weiteren Code eingeben</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
       <View style={s.footer}>
         <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={handleLogout}>

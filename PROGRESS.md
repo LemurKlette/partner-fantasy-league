@@ -61,3 +61,20 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Wiederholbare Badges (Typ 3) werden pro Wochen-`period_key` einzeln vergeben, damit ein
   gebrochener und neu aufgebauter Streak erneut zählt
 - Migration: `supabase/migrations/20260804_19_full_badge_system.sql`
+
+## Schritt 5 – Männerprofil + Partner-Code-System (2026-08-05)
+- Partner-Code-System (Invite-Code beim Partner-Anlegen, Männer-Onboarding per Code,
+  Disconnect) war bereits aus einer früheren Session vorhanden (`partner_connections`,
+  `connect_to_partner` RPC) – hier erweitert statt neu gebaut
+- Neue `profiles`-Tabelle mit `role` ('woman'/'man') als Datenmodell-Ergänzung; da
+  `auth.users` nicht direkt erweitert werden soll, läuft das über eine Begleit-Tabelle mit
+  Trigger (Partner anlegen → role='woman') bzw. RPC-Erweiterung (Code verbinden → role='man')
+  plus Backfill für Bestandsdaten. Die App-Navigation nutzt weiterhin die bestehende
+  Datenerkennung, nicht das role-Feld direkt
+- Neue wiederverwendbare Komponente `components/BadgeGrid.tsx`: zeigt alle Badges gruppiert
+  nach Typ, verdiente farbig mit ×N-Zähler bei wiederholbaren, offene ausgegraut,
+  Fortschrittsbalken für Typ 1+2, versteckte Typ-5-Badges nur nach Erhalt sichtbar
+  (self-contained: lädt Badges/Fortschritt selbst anhand `partnerId`-Prop)
+- Männerprofil zeigt jetzt die Badge-Übersicht als Hauptinhalt (pro Verbindung, falls
+  mehrere), darunter weiterhin die Liste verbundener Frauen mit Disconnect-Option
+- Migration: `supabase/migrations/20260804_20_profiles_role.sql`
