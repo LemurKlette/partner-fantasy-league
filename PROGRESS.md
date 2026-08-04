@@ -15,3 +15,18 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Eigene Kategorien: Tier-Auswahl (2/5/10/20/40) statt freiem Zahlenfeld, Maximum Tier 5
 - Migration: `supabase/migrations/20260804_16_tier_point_system.sql` (manuell im Supabase
   Dashboard auszuführen)
+
+## Schritt 2 – Anti-Farming-Regeln (2026-08-05)
+- Serverseitig per Postgres-Trigger (`before insert on point_entries`) – kann nicht durch
+  den Client umgangen werden, da er unabhängig vom übermittelten `points`-Wert greift
+- Abnehmender Ertrag: 1. Eintrag derselben Aufgabe/Tag = 100%, 2. = 50% (aufgerundet),
+  3. und weitere = 0 Punkte (wird weiter geloggt)
+- Tageslimit: 80 Punkte pro Partner und Tag (über alle Gruppen), danach zählen weitere
+  Einträge 0 Punkte; UI zeigt freundlichen Hinweis "Er hatte heute wohl einen sehr guten
+  Tag 😉"
+- Neue Spalte `point_entries.capped_reason` ('daily_limit' | 'task_repeat' | null) für die
+  richtige Client-Meldung
+- Activity Log zeigt 0-Punkte-Einträge mit Hinweis "0 Punkte – Tageslimit erreicht"
+- Obergrenze eigene Kategorien: bereits durch Tier-System aus Schritt 1 serverseitig
+  abgesichert (Tier max. 5 = 40 Punkte, `point_categories_custom_tier_required`-Constraint)
+- Migration: `supabase/migrations/20260804_17_anti_farming_rules.sql`

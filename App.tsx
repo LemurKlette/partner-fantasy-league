@@ -500,14 +500,14 @@ export default function App() {
     const effectivePartnerId = selectedPartnerIdForPoints ?? partner!.id;
     const effectivePartnerName = myAllPartners.find(p => p.id === effectivePartnerId)?.name ?? partner?.name ?? '';
     const applyMultiplier = withoutRequest && selectedCategory.multiplier_eligible;
-    const finalPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
+    const requestedPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
     setLoading(true);
-    const { error } = await supabase.from('point_entries').insert({
+    const { data, error } = await supabase.from('point_entries').insert({
       partner_id: effectivePartnerId, group_id: selectedGroup!.id,
-      category_id: selectedCategory.id, points: finalPoints,
+      category_id: selectedCategory.id, points: requestedPoints,
       without_request: applyMultiplier,
       note: note.trim() || null, created_by: session!.user.id,
-    });
+    }).select('points, capped_reason').single();
     if (error) Alert.alert('Fehler', error.message);
     else {
       setSelectedCategory(null);
@@ -515,7 +515,11 @@ export default function App() {
       setWithoutRequest(false);
       await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
       await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
-      Alert.alert('Gespeichert!', `${finalPoints} Punkte fuer ${effectivePartnerName} vergeben.`);
+      if (data?.capped_reason === 'daily_limit') {
+        Alert.alert('😉', 'Er hatte heute wohl einen sehr guten Tag – weitere Punkte zählen ab morgen.');
+      } else {
+        Alert.alert('Gespeichert!', `${data?.points ?? requestedPoints} Punkte fuer ${effectivePartnerName} vergeben.`);
+      }
       setScreen('group-detail');
     }
     setLoading(false);
@@ -833,7 +837,9 @@ export default function App() {
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                     <Text style={[s.cardSub, { flex: 1, marginRight: 8 }]}>{entry.note ? `„${entry.note}"` : ''}</Text>
-                    <Text style={[s.pts, { fontSize: 13 }]}>+{entry.points} · {timeAgo(entry.created_at)}</Text>
+                    <Text style={[s.pts, { fontSize: 13 }, entry.points === 0 && { color: '#bbb' }]}>
+                      {entry.points === 0 ? '0 Punkte – Tageslimit erreicht' : `+${entry.points}`} · {timeAgo(entry.created_at)}
+                    </Text>
                   </View>
                 </View>
               ))
