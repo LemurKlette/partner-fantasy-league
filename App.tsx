@@ -33,7 +33,7 @@ type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
   | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help'
-  | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile';
+  | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile' | 'partner-badges';
 
 const TIERS: { tier: number; points: number; label: string }[] = [
   { tier: 1, points: 2, label: 'Tier 1 · 2 Pkt' },
@@ -122,6 +122,7 @@ export default function App() {
   const [groupPartnerMemberships, setGroupPartnerMemberships] = useState<GroupPartnerMembership[]>([]);
   const [selectedPartnerIdForPoints, setSelectedPartnerIdForPoints] = useState<string | null>(null);
   const [myAllPartners, setMyAllPartners] = useState<Partner[]>([]);
+  const [viewedPartner, setViewedPartner] = useState<Partner | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -821,7 +822,11 @@ export default function App() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
           <View>
             <Text style={s.headerTitle}>Meine Gruppen</Text>
-            <Text style={s.headerSub}>{partner?.name}</Text>
+            {partner && (
+              <TouchableOpacity onPress={() => { setViewedPartner(partner); setScreen('partner-badges'); }}>
+                <Text style={[s.headerSub, { textDecorationLine: 'underline' }]}>{partner.name} ›</Text>
+              </TouchableOpacity>
+            )}
           </View>
           <View style={{ alignItems: 'flex-end', gap: 6 }}>
             <TouchableOpacity onPress={() => { loadProfileData(); setScreen('profile'); }}>
@@ -1336,6 +1341,20 @@ export default function App() {
           <Text style={s.btnOutlineText}>Abmelden</Text>
         </TouchableOpacity>
       </View>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'partner-badges') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <Text style={s.headerTitle}>{viewedPartner?.name}</Text>
+        <Text style={s.headerSub}>Badges & Erfolge</Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 20 }}>
+        {viewedPartner && <BadgeGrid partnerId={viewedPartner.id} />}
+      </ScrollView>
       <StatusBar style="auto" />
     </View>
   );

@@ -78,3 +78,10 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Männerprofil zeigt jetzt die Badge-Übersicht als Hauptinhalt (pro Verbindung, falls
   mehrere), darunter weiterhin die Liste verbundener Frauen mit Disconnect-Option
 - Migration: `supabase/migrations/20260804_20_profiles_role.sql`
+
+## Schritt 6 – Frauen-Ansicht: Partner-Badge-Übersicht (2026-08-05)
+- Partnername im Header von "Meine Gruppen" ist jetzt klickbar (unterstrichen, mit ›) und
+  öffnet den neuen Screen `partner-badges`
+- Screen nutzt exakt dieselbe `BadgeGrid`-Komponente wie das Männerprofil (kein Duplikat) –
+  ohne Disconnect-Button und ohne Invite-Code, wie gefordert
+- Kein neues Datenbank-SQL für diesen Schritt nötig
