@@ -19,6 +19,7 @@ type Group = { id: string; name: string; invite_code: string };
 type GroupMember = { user_id: string; partner: Partner | null };
 type Category = { id: string; name: string; points: number; icon: string; is_global: boolean };
 type RankingEntry = { partner_id: string; name: string; total: number };
+type EarnedBadge = { partner_id: string; icon: string; name: string };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null;
   partners: { name: string }; point_categories: { name: string };
@@ -76,6 +77,7 @@ export default function App() {
   const [newCatName, setNewCatName] = useState('');
   const [newCatPoints, setNewCatPoints] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('');
+  const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
   const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
   const [period, setPeriod] = useState<Period>('week');
@@ -124,6 +126,53 @@ export default function App() {
     setRankingLoading(false);
   }
 
+  async function loadEarnedBadges(groupId: string) {
+    const { data } = await supabase.from('partner_badges')
+      .select('partner_id, badges(icon, name)')
+      .eq('group_id', groupId);
+    setEarnedBadges(((data ?? []) as any[]).map(r => ({
+      partner_id: r.partner_id,
+      icon: (r.badges as any)?.icon ?? '🎖️',
+      name: (r.badges as any)?.name ?? '',
+    })));
+  }
+
+  async function checkAndAwardBadges(partnerId: string, groupId: string) {
+    const [{ data: allBadges }, { data: earnedRows }, { data: allEntries }, { data: weekEntries }, { data: monthEntries }] = await Promise.all([
+      supabase.from('badges').select('*'),
+      supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId).eq('group_id', groupId),
+      supabase.from('point_entries').select('points, point_categories(category_tag)').eq('partner_id', partnerId).eq('group_id', groupId),
+      supabase.from('point_entries').select('points').eq('partner_id', partnerId).eq('group_id', groupId).gte('created_at', getStartDate('week')),
+      supabase.from('point_entries').select('points').eq('partner_id', partnerId).eq('group_id', groupId).gte('created_at', getStartDate('month')),
+    ]);
+    const earnedIds = new Set((earnedRows ?? []).map((b: any) => b.badge_id));
+    const totalPoints = (allEntries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
+    const weekPoints = (weekEntries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
+    const monthPoints = (monthEntries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
+    const catTotals: Record<string, number> = {};
+    (allEntries ?? []).forEach((e: any) => {
+      const tag = (e.point_categories as any)?.category_tag;
+      if (tag) catTotals[tag] = (catTotals[tag] || 0) + e.points;
+    });
+    const newBadgeNames: string[] = [];
+    for (const badge of (allBadges ?? []) as any[]) {
+      if (earnedIds.has(badge.id)) continue;
+      let earned = false;
+      if (badge.trigger_type === 'total_points' && totalPoints >= badge.trigger_value) earned = true;
+      if (badge.trigger_type === 'week_points' && weekPoints >= badge.trigger_value) earned = true;
+      if (badge.trigger_type === 'month_points' && monthPoints >= badge.trigger_value) earned = true;
+      if (badge.trigger_type === 'category_points' && badge.category_filter && (catTotals[badge.category_filter] || 0) >= badge.trigger_value) earned = true;
+      if (earned) {
+        await supabase.from('partner_badges').insert({ partner_id: partnerId, badge_id: badge.id, group_id: groupId });
+        newBadgeNames.push(`${badge.icon} ${badge.name}`);
+      }
+    }
+    if (newBadgeNames.length > 0) {
+      Alert.alert('🎖️ Badge verdient!', newBadgeNames.join('\n'));
+      await loadEarnedBadges(groupId);
+    }
+  }
+
   async function loadActivityLog(groupId: string) {
     const { data } = await supabase.from('point_entries')
       .select('id, points, created_at, note, partners(name), point_categories(name)')
@@ -143,7 +192,7 @@ export default function App() {
       partner: (partnerRows ?? []).find((p: any) => p.owner_user_id === uid) ?? null,
     })));
     setPeriod('week');
-    await Promise.all([loadRankingForGroup(group.id, 'week'), loadActivityLog(group.id)]);
+    await Promise.all([loadRankingForGroup(group.id, 'week'), loadActivityLog(group.id), loadEarnedBadges(group.id)]);
     setScreen('group-detail');
     setLoading(false);
   }
@@ -300,10 +349,11 @@ export default function App() {
     });
     if (error) Alert.alert('Fehler', error.message);
     else {
-      Alert.alert('✅ Gespeichert!', `${selectedCategory.points} Punkte für ${partner!.name} vergeben.`);
       setSelectedCategory(null);
       setNote('');
       await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
+      await checkAndAwardBadges(partner!.id, selectedGroup!.id);
+      Alert.alert('✅ Gespeichert!', `${selectedCategory.points} Punkte für ${partner!.name} vergeben.`);
       setScreen('group-detail');
     }
     setLoading(false);
@@ -471,13 +521,21 @@ export default function App() {
               ? <ActivityIndicator color="#3ECF8E" />
               : ranking.length === 0
                 ? <Text style={s.empty}>Noch keine Punkte in diesem Zeitraum.</Text>
-                : ranking.map((item, index) => (
-                  <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
-                    <Text style={{ fontSize: 20, width: 36 }}>{index === 0 ? '🏆' : `${index + 1}.`}</Text>
-                    <Text style={[s.cardTitle, { flex: 1 }]}>{item.name}</Text>
-                    <Text style={s.pts}>{item.total} Pkt</Text>
-                  </View>
-                ))
+                : ranking.map((item, index) => {
+                    const badges = earnedBadges.filter(b => b.partner_id === item.partner_id);
+                    return (
+                      <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
+                        <Text style={{ fontSize: 20, width: 36 }}>{index === 0 ? '🏆' : `${index + 1}.`}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.cardTitle}>{item.name}</Text>
+                          {badges.length > 0 && (
+                            <Text style={{ fontSize: 14, marginTop: 2 }}>{badges.map(b => b.icon).join(' ')}</Text>
+                          )}
+                        </View>
+                        <Text style={s.pts}>{item.total} Pkt</Text>
+                      </View>
+                    );
+                  })
             }
 
             <Text style={s.sectionLabel}>Letzte Aktivitäten</Text>
