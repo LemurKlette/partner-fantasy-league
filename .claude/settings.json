@@ -1,5 +1,18 @@
 {
   "enabledPlugins": {
     "expo@claude-plugins-official": true
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /c/Users/marcu/Desktop/partner-fantasy-league && git add -A && git diff --cached --quiet || (git commit -m \"auto: save progress\" && git push)",
+            "statusMessage": "Änderungen werden auf GitHub gespeichert..."
+          }
+        ]
+      }
+    ]
   }
 }
