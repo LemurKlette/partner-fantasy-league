@@ -30,3 +30,20 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Obergrenze eigene Kategorien: bereits durch Tier-System aus Schritt 1 serverseitig
   abgesichert (Tier max. 5 = 40 Punkte, `point_categories_custom_tier_required`-Constraint)
 - Migration: `supabase/migrations/20260804_17_anti_farming_rules.sql`
+
+## Schritt 3 – Saisonstruktur (2026-08-05)
+- Woche/Monat/Jahr-Tabs waren bereits kalenderbasiert (Woche = Mo–So, Monat = Kalendermonat,
+  Jahr = Kalenderjahr) – der Punkte-"Reset" zum 1. Januar passiert dadurch automatisch beim
+  Filtern, alte Einträge bleiben für die Historie erhalten
+- Ranking zeigt jetzt beim Erstplatzierten den kontextuellen Titel ("Spieler der Woche" /
+  "Monatssieger" / "Saisonsieger [Jahr]") je nach gewähltem Tab
+- Neue Typ-4-Badges (Saisontitel, wiederholbar): Spieler der Woche, Monatssieger, Saisonsieger
+- `badges`-Tabelle um `badge_type`, `is_hidden`, `is_repeatable` erweitert; `partner_badges`
+  um `period_key` erweitert (Basis für Schritt 4, wird dort für die übrigen Badge-Typen
+  weiterverwendet)
+- Funktion `award_period_title(period)` ermittelt pro Gruppe automatisch die/den
+  Erstplatzierte(n) des zuletzt abgeschlossenen Zeitraums und vergibt den Titel
+- **Wichtig:** automatische Vergabe läuft über `pg_cron` (wöchentlich Mo 00:05 UTC, monatlich
+  1. um 00:05 UTC, jährlich 1.1. um 00:05 UTC) – falls die Extension im Supabase-Projekt noch
+  nicht aktiviert ist, muss sie vorher unter Database → Extensions → pg_cron aktiviert werden
+- Migration: `supabase/migrations/20260804_18_season_structure.sql`

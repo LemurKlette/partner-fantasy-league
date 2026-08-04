@@ -805,11 +805,15 @@ export default function App() {
                 ? <Text style={s.empty}>Noch keine Punkte in diesem Zeitraum.</Text>
                 : ranking.map((item, index) => {
                     const badges = earnedBadges.filter(b => b.partner_id === item.partner_id);
+                    const leaderLabel = period === 'week' ? 'Spieler der Woche' : period === 'month' ? 'Monatssieger' : `Saisonsieger ${new Date().getFullYear()}`;
                     return (
                       <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
                         <Text style={{ fontSize: 20, width: 36 }}>{index === 0 ? '🏆' : `${index + 1}.`}</Text>
                         <View style={{ flex: 1 }}>
                           <Text style={s.cardTitle}>{item.name}</Text>
+                          {index === 0 && item.total > 0 && (
+                            <Text style={{ fontSize: 11, color: '#3ECF8E', fontWeight: '600', marginTop: 1 }}>{leaderLabel}</Text>
+                          )}
                           {badges.length > 0 && (
                             <Text style={{ fontSize: 14, marginTop: 2 }}>{badges.map(b => b.icon).join(' ')}</Text>
                           )}
