@@ -21,6 +21,7 @@ type Category = { id: string; name: string; points: number; icon: string; is_glo
 type RankingEntry = { partner_id: string; name: string; total: number };
 type EarnedBadge = { partner_id: string; icon: string; name: string };
 type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string } };
+type PartnerWithCode = { id: string; name: string; invite_code: string };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null; created_by: string;
   partners: { name: string }; point_categories: { name: string };
@@ -90,6 +91,13 @@ export default function App() {
   const [generatedPartnerCode, setGeneratedPartnerCode] = useState('');
   const [partnerInviteInput, setPartnerInviteInput] = useState('');
   const [manConnections, setManConnections] = useState<ManConnection[]>([]);
+  const [myPartners, setMyPartners] = useState<PartnerWithCode[]>([]);
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
+  const [editPartnerNames, setEditPartnerNames] = useState<Record<string, string>>({});
+  const [showAddPartnerForm, setShowAddPartnerForm] = useState(false);
+  const [newPartnerNameForProfile, setNewPartnerNameForProfile] = useState('');
   const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
   const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
   const [period, setPeriod] = useState<Period>('week');
@@ -424,6 +432,74 @@ export default function App() {
     setLoading(false);
   }
 
+  async function loadProfileData() {
+    const { data: pts } = await supabase.from('partners')
+      .select('id, name').eq('owner_user_id', session!.user.id).order('created_at');
+    if (!pts || pts.length === 0) { setMyPartners([]); return; }
+    const { data: conns } = await supabase.from('partner_connections')
+      .select('partner_id, invite_code').in('partner_id', pts.map((p: any) => p.id));
+    const codeMap: Record<string, string> = {};
+    (conns ?? []).forEach((c: any) => { codeMap[c.partner_id] = c.invite_code; });
+    const nameMap: Record<string, string> = {};
+    pts.forEach((p: any) => { nameMap[p.id] = p.name; });
+    setMyPartners(pts.map((p: any) => ({ id: p.id, name: p.name, invite_code: codeMap[p.id] ?? '—' })));
+    setEditPartnerNames(nameMap);
+    setEditEmail(session?.user.email ?? '');
+  }
+
+  async function handleUpdateEmail() {
+    if (!editEmail.trim()) return;
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ email: editEmail.trim() });
+    if (error) Alert.alert('Fehler', error.message);
+    else Alert.alert('E-Mail gespeichert', 'Bitte bestätige die Änderung in deiner neuen Inbox.');
+    setLoading(false);
+  }
+
+  async function handleUpdatePassword() {
+    if (!editPassword) return;
+    if (editPassword !== editPasswordConfirm) { Alert.alert('Fehler', 'Passwörter stimmen nicht überein.'); return; }
+    if (editPassword.length < 6) { Alert.alert('Fehler', 'Mindestens 6 Zeichen.'); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password: editPassword });
+    if (error) Alert.alert('Fehler', error.message);
+    else { Alert.alert('Passwort geändert!', ''); setEditPassword(''); setEditPasswordConfirm(''); }
+    setLoading(false);
+  }
+
+  async function handleUpdatePartnerName(partnerId: string) {
+    const newName = (editPartnerNames[partnerId] ?? '').trim();
+    if (!newName) return;
+    setLoading(true);
+    const { error } = await supabase.from('partners').update({ name: newName }).eq('id', partnerId);
+    if (error) Alert.alert('Fehler', error.message);
+    else {
+      setMyPartners(prev => prev.map(p => p.id === partnerId ? { ...p, name: newName } : p));
+      if (partner?.id === partnerId) setPartner(prev => prev ? { ...prev, name: newName } : prev);
+      Alert.alert('Name gespeichert!', '');
+    }
+    setLoading(false);
+  }
+
+  async function handleAddPartnerFromProfile() {
+    const name = newPartnerNameForProfile.trim();
+    if (!name) { Alert.alert('Fehler', 'Bitte gib einen Namen ein.'); return; }
+    setLoading(true);
+    const { data, error } = await supabase.from('partners')
+      .insert({ owner_user_id: session!.user.id, name }).select('id, name').single();
+    if (error) { Alert.alert('Fehler', error.message); setLoading(false); return; }
+    const code = generatePartnerCode();
+    const { error: connError } = await supabase.from('partner_connections')
+      .insert({ partner_id: data.id, invite_code: code });
+    if (connError) { Alert.alert('Fehler', connError.message); setLoading(false); return; }
+    setMyPartners(prev => [...prev, { id: data.id, name: data.name, invite_code: code }]);
+    setEditPartnerNames(prev => ({ ...prev, [data.id]: data.name }));
+    setNewPartnerNameForProfile('');
+    setShowAddPartnerForm(false);
+    Alert.alert('Partner angelegt!', `Einladungscode: ${code}`);
+    setLoading(false);
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     setSession(null); setPartner(null); setGroups([]);
@@ -563,7 +639,7 @@ export default function App() {
             <Text style={s.headerSub}>{partner?.name}</Text>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <TouchableOpacity onPress={() => setScreen('profile')}>
+            <TouchableOpacity onPress={() => { loadProfileData(); setScreen('profile'); }}>
               <Text style={{ fontSize: 13, color: '#3ECF8E' }}>Profil ›</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => { setHelpTab('frauen'); setHelpReturnScreen('groups'); setScreen('help'); }}>
@@ -984,31 +1060,99 @@ export default function App() {
         <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
         <Text style={s.headerTitle}>Profil & Einstellungen</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
-        <Text style={s.sectionLabel}>Konto</Text>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 60 }}>
+
+        <Text style={s.sectionLabel}>E-Mail-Adresse</Text>
         <View style={s.card}>
-          <Text style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>E-Mail</Text>
-          <Text style={{ fontSize: 16 }}>{session?.user.email}</Text>
-        </View>
-        <View style={s.card}>
-          <Text style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>Partner-Name</Text>
-          <Text style={{ fontSize: 16 }}>{partner?.name}</Text>
+          <TextInput style={[s.input, { marginBottom: 8 }]}
+            value={editEmail} onChangeText={setEditEmail}
+            autoCapitalize="none" keyboardType="email-address" />
+          <TouchableOpacity style={s.btn} onPress={handleUpdateEmail} disabled={loading}>
+            <Text style={s.btnText}>E-Mail speichern</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 11, color: '#bbb', marginTop: 6 }}>
+            Änderungen müssen per E-Mail bestätigt werden.
+          </Text>
         </View>
 
-        <Text style={[s.sectionLabel, { marginTop: 16 }]}>Aktionen</Text>
+        <Text style={[s.sectionLabel, { marginTop: 4 }]}>Passwort ändern</Text>
+        <View style={s.card}>
+          <TextInput style={[s.input, { marginBottom: 8 }]}
+            placeholder="Neues Passwort (min. 6 Zeichen)"
+            value={editPassword} onChangeText={setEditPassword} secureTextEntry />
+          <TextInput style={[s.input, { marginBottom: 8 }]}
+            placeholder="Passwort bestätigen"
+            value={editPasswordConfirm} onChangeText={setEditPasswordConfirm} secureTextEntry />
+          <TouchableOpacity style={s.btn} onPress={handleUpdatePassword} disabled={loading}>
+            <Text style={s.btnText}>Passwort speichern</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={[s.sectionLabel, { marginTop: 4 }]}>Meine Partner & Einladungscodes</Text>
+        {myPartners.map(p => (
+          <View key={p.id} style={s.card}>
+            <TextInput
+              style={[s.input, { marginBottom: 8 }]}
+              value={editPartnerNames[p.id] ?? p.name}
+              onChangeText={v => setEditPartnerNames(prev => ({ ...prev, [p.id]: v }))}
+              placeholder="Name des Partners"
+            />
+            <TouchableOpacity style={[s.btn, { marginBottom: 14 }]}
+              onPress={() => handleUpdatePartnerName(p.id)} disabled={loading}>
+              <Text style={s.btnText}>Name speichern</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <Text style={{ fontSize: 11, color: '#aaa', marginBottom: 3 }}>Einladungscode</Text>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#3ECF8E', letterSpacing: 2 }}>{p.invite_code}</Text>
+              </View>
+              <TouchableOpacity style={s.codeBtn}
+                onPress={() => Share.share({ message: `Dein Einladungscode für die Partner Fantasy League: ${p.invite_code}` })}>
+                <Text style={s.codeBtnText}>Teilen 🔗</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+
+        {showAddPartnerForm
+          ? <View style={s.card}>
+              <Text style={[s.cardTitle, { marginBottom: 10 }]}>Neuen Partner anlegen</Text>
+              <TextInput style={[s.input, { marginBottom: 8 }]}
+                placeholder="Name des Partners"
+                value={newPartnerNameForProfile}
+                onChangeText={setNewPartnerNameForProfile} />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {loading
+                  ? <ActivityIndicator style={{ flex: 1 }} />
+                  : <>
+                      <TouchableOpacity style={[s.btn, { flex: 1 }]} onPress={handleAddPartnerFromProfile}>
+                        <Text style={s.btnText}>Anlegen</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[s.btn, s.btnOutline, { flex: 1 }]} onPress={() => setShowAddPartnerForm(false)}>
+                        <Text style={s.btnOutlineText}>Abbrechen</Text>
+                      </TouchableOpacity>
+                    </>
+                }
+              </View>
+            </View>
+          : <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setShowAddPartnerForm(true)}>
+              <Text style={s.btnOutlineText}>+ Weiteren Partner anlegen</Text>
+            </TouchableOpacity>
+        }
+
+        <Text style={[s.sectionLabel, { marginTop: 4 }]}>Konto</Text>
         <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={handleLogout}>
           <Text style={s.btnOutlineText}>Abmelden</Text>
         </TouchableOpacity>
-
         {loading
-          ? <ActivityIndicator color="#ff4444" style={{ marginTop: 8 }} />
+          ? <ActivityIndicator color="#ff4444" />
           : <TouchableOpacity
               style={[s.btn, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ff4444' }]}
               onPress={handleDeleteAccount}>
               <Text style={{ color: '#ff4444', fontWeight: 'bold', fontSize: 16 }}>Konto löschen</Text>
             </TouchableOpacity>
         }
-        <Text style={{ fontSize: 12, color: '#bbb', textAlign: 'center', marginTop: 4 }}>
+        <Text style={{ fontSize: 12, color: '#bbb', textAlign: 'center' }}>
           Das Löschen entfernt alle deine Daten dauerhaft.
         </Text>
       </ScrollView>
