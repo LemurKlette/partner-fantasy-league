@@ -16,7 +16,7 @@ import type { Session } from '@supabase/supabase-js';
 import BadgeGrid from './components/BadgeGrid';
 
 type Partner = { id: string; name: string };
-type Group = { id: string; name: string; invite_code: string };
+type Group = { id: string; name: string; invite_code: string; created_by: string };
 type GroupMember = { user_id: string; partner: Partner | null };
 type Category = { id: string; name: string; points: number; icon: string; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
 type RankingEntry = { partner_id: string; name: string; total: number };
@@ -182,7 +182,7 @@ export default function App() {
   }
 
   async function loadGroups(session: Session) {
-    const { data } = await supabase.from('group_members').select('groups(id, name, invite_code)')
+    const { data } = await supabase.from('group_members').select('groups(id, name, invite_code, created_by)')
       .eq('user_id', session.user.id);
     setGroups(((data ?? []) as any[]).map(r => r.groups).filter(Boolean));
     setScreen('groups');
@@ -572,7 +572,7 @@ export default function App() {
     const invite_code = generateInviteCode();
     const { data, error } = await supabase.from('groups')
       .insert({ name: groupName.trim(), created_by: session!.user.id, invite_code })
-      .select('id, name, invite_code').single();
+      .select('id, name, invite_code, created_by').single();
     if (error) { Alert.alert('Fehler', error.message); }
     else {
       await supabase.from('group_members').insert({ group_id: data.id, user_id: session!.user.id });
@@ -594,6 +594,26 @@ export default function App() {
       setScreen('groups');
     }
     setLoading(false);
+  }
+
+  async function handleDeleteGroup(groupId: string, groupName: string) {
+    Alert.alert(
+      'Gruppe löschen',
+      `"${groupName}" wirklich löschen? Alle Punkte, Kategorien und Mitgliedschaften dieser Gruppe werden unwiderruflich gelöscht.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen', style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            const { error } = await supabase.rpc('delete_group', { p_group_id: groupId });
+            if (error) { Alert.alert('Fehler', error.message); }
+            else { setGroups(prev => prev.filter(g => g.id !== groupId)); }
+            setLoading(false);
+          },
+        },
+      ]
+    );
   }
 
   async function handleSavePoints() {
@@ -850,10 +870,17 @@ export default function App() {
         ? <View style={s.center}><Text style={s.empty}>Du bist noch in keiner Gruppe.</Text></View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
             {groups.map(item => (
-              <TouchableOpacity key={item.id} style={s.card} onPress={() => openGroup(item)}>
-                <Text style={s.cardTitle}>{item.name}</Text>
-                <Text style={s.cardSub}>Code: {item.invite_code} ›</Text>
-              </TouchableOpacity>
+              <View key={item.id} style={s.card}>
+                <TouchableOpacity onPress={() => openGroup(item)}>
+                  <Text style={s.cardTitle}>{item.name}</Text>
+                  <Text style={s.cardSub}>Code: {item.invite_code} ›</Text>
+                </TouchableOpacity>
+                {item.created_by === session?.user.id && (
+                  <TouchableOpacity onPress={() => handleDeleteGroup(item.id, item.name)} style={{ marginTop: 10, alignSelf: 'flex-start' }}>
+                    <Text style={{ color: '#ff4444', fontSize: 12, fontWeight: '600' }}>Gruppe löschen</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             ))}
           </ScrollView>
       }

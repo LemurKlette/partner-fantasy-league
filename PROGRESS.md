@@ -103,3 +103,14 @@ speziell die 6-Schritte-Umbau-Sequenz.
   fester Reihenfolge je Typ (Meilensteine nach Schwelle, Spezialisten nach
   Kategorie+Bronze/Silber/Gold, Konsistenz nach Dauer, Saisontitel Woche→Monat→Jahr)
 - Migration: `supabase/migrations/20260804_21_badge_sort_order.sql`
+
+## Feature: Gruppe löschen (2026-08-05)
+- Neuer "Gruppe löschen"-Button auf der Gruppenkarte in "Meine Gruppen" – nur sichtbar für
+  die Erstellerin der Gruppe (`created_by === eigene user_id`)
+- RPC `delete_group(p_group_id)`: prüft serverseitig, dass nur die Erstellerin löschen darf,
+  räumt danach abhängige Daten auf (partner_badges, group_category_overrides,
+  point_entries, group-eigene point_categories, group_partner_memberships, group_members)
+  und löscht zuletzt die Gruppe selbst
+- `join_group_by_invite_code`-RPC liefert jetzt zusätzlich `created_by` zurück, damit der
+  Client weiß, ob die beitretende Person Erstellerin ist
+- Migration: `supabase/migrations/20260804_22_delete_group_rpc.sql`
