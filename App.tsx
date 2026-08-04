@@ -35,6 +35,14 @@ type Screen =
   | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help'
   | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile' | 'partner-badges';
 
+const CATEGORY_TAG_ORDER = ['haushalt', 'mental_load', 'romantik', 'verlaesslichkeit'];
+const CATEGORY_TAG_LABELS: Record<string, string> = {
+  haushalt: '🧹 Haushalt',
+  mental_load: '🧠 Mental Load',
+  romantik: '💐 Romantik & Aufmerksamkeit',
+  verlaesslichkeit: '🛡️ Verlässlichkeit & Partnerschaft',
+};
+
 const TIERS: { tier: number; points: number; label: string }[] = [
   { tier: 1, points: 2, label: 'Tier 1 · 2 Pkt' },
   { tier: 2, points: 5, label: 'Tier 2 · 5 Pkt' },
@@ -1043,11 +1051,28 @@ export default function App() {
                 </View>
               </TouchableOpacity>
             ))}
-            <Text style={[s.sectionLabel, { marginTop: 8 }]}>Standard-Kategorien</Text>
           </>
         )}
         {!categories.some(c => !c.is_global) && <Text style={s.sectionLabel}>Kategorie wählen</Text>}
-        {categories.filter(c => c.is_global).map(cat => (
+        {CATEGORY_TAG_ORDER.map(tag => {
+          const catsInGroup = categories.filter(c => c.is_global && c.category_tag === tag)
+            .sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0) || a.name.localeCompare(b.name));
+          if (catsInGroup.length === 0) return null;
+          return (
+            <View key={tag} style={{ gap: 8 }}>
+              <Text style={[s.sectionLabel, { marginTop: 8 }]}>{CATEGORY_TAG_LABELS[tag] ?? tag}</Text>
+              {catsInGroup.map(cat => (
+                <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
+                    <Text style={s.pts}>+{cat.points}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          );
+        })}
+        {categories.filter(c => c.is_global && !CATEGORY_TAG_ORDER.includes(c.category_tag ?? '')).map(cat => (
           <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
