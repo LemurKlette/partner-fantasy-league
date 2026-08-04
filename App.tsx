@@ -27,7 +27,7 @@ type Period = 'week' | 'month' | 'year';
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
-  | 'group-detail' | 'add-points';
+  | 'group-detail' | 'add-points' | 'profile';
 
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -231,6 +231,30 @@ export default function App() {
     setEmail(''); setPassword(''); setScreen('auth');
   }
 
+  async function handleDeleteAccount() {
+    Alert.alert(
+      'Konto löschen',
+      'Bist du sicher? Alle deine Daten (Partner, Punkte, Gruppenmitgliedschaften) werden dauerhaft gelöscht.',
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Ja, löschen', style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            const { error } = await supabase.rpc('delete_account');
+            if (error) Alert.alert('Fehler', error.message);
+            else {
+              await supabase.auth.signOut();
+              setSession(null); setPartner(null); setGroups([]);
+              setEmail(''); setPassword(''); setScreen('auth');
+            }
+            setLoading(false);
+          },
+        },
+      ]
+    );
+  }
+
   // ── SCREENS ──────────────────────────────────────────
 
   if (screen === 'loading') return (
@@ -296,8 +320,15 @@ export default function App() {
   if (screen === 'groups') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <Text style={s.headerTitle}>Meine Gruppen</Text>
-        <Text style={s.headerSub}>{partner?.name}</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <View>
+            <Text style={s.headerTitle}>Meine Gruppen</Text>
+            <Text style={s.headerSub}>{partner?.name}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setScreen('profile')}>
+            <Text style={{ fontSize: 13, color: '#3ECF8E' }}>Profil ›</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       {groups.length === 0
         ? <View style={s.center}><Text style={s.empty}>Du bist noch in keiner Gruppe.</Text></View>
@@ -313,7 +344,6 @@ export default function App() {
       <View style={s.footer}>
         <TouchableOpacity style={s.btn} onPress={() => setScreen('create-group')}><Text style={s.btnText}>+ Gruppe erstellen</Text></TouchableOpacity>
         <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setScreen('join-group')}><Text style={s.btnOutlineText}>Gruppe beitreten</Text></TouchableOpacity>
-        <TouchableOpacity onPress={handleLogout}><Text style={[s.link, { marginTop: 8 }]}>Logout</Text></TouchableOpacity>
       </View>
       <StatusBar style="auto" />
     </View>
@@ -434,6 +464,44 @@ export default function App() {
     </View>
   );
 
+  if (screen === 'profile') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <Text style={s.headerTitle}>Profil & Einstellungen</Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+        <Text style={s.sectionLabel}>Konto</Text>
+        <View style={s.card}>
+          <Text style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>E-Mail</Text>
+          <Text style={{ fontSize: 16 }}>{session?.user.email}</Text>
+        </View>
+        <View style={s.card}>
+          <Text style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>Partner-Name</Text>
+          <Text style={{ fontSize: 16 }}>{partner?.name}</Text>
+        </View>
+
+        <Text style={[s.sectionLabel, { marginTop: 16 }]}>Aktionen</Text>
+        <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={handleLogout}>
+          <Text style={s.btnOutlineText}>Abmelden</Text>
+        </TouchableOpacity>
+
+        {loading
+          ? <ActivityIndicator color="#ff4444" style={{ marginTop: 8 }} />
+          : <TouchableOpacity
+              style={[s.btn, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ff4444' }]}
+              onPress={handleDeleteAccount}>
+              <Text style={{ color: '#ff4444', fontWeight: 'bold', fontSize: 16 }}>Konto löschen</Text>
+            </TouchableOpacity>
+        }
+        <Text style={{ fontSize: 12, color: '#bbb', textAlign: 'center', marginTop: 4 }}>
+          Das Löschen entfernt alle deine Daten dauerhaft.
+        </Text>
+      </ScrollView>
+      <StatusBar style="auto" />
+    </View>
+  );
+
   return null;
 }
 
@@ -446,7 +514,7 @@ const s = StyleSheet.create({
   back: { fontSize: 14, color: '#3ECF8E', marginBottom: 4 },
   codeBtn: { backgroundColor: '#f0fdf9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   codeBtnText: { fontSize: 13, color: '#3ECF8E', fontWeight: '600' },
-  footer: { padding: 20, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', gap: 10, alignItems: 'center' },
+  footer: { padding: 20, paddingBottom: 60, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', gap: 10, alignItems: 'center' },
   sectionLabel: { fontSize: 12, fontWeight: '600', color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 8 },
   subtitle: { fontSize: 15, color: '#555', marginBottom: 24 },
