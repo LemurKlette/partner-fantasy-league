@@ -17,7 +17,7 @@ import type { Session } from '@supabase/supabase-js';
 type Partner = { id: string; name: string };
 type Group = { id: string; name: string; invite_code: string };
 type GroupMember = { user_id: string; partner: Partner | null };
-type Category = { id: string; name: string; points: number; icon: string };
+type Category = { id: string; name: string; points: number; icon: string; is_global: boolean };
 type RankingEntry = { partner_id: string; name: string; total: number };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null;
@@ -27,7 +27,7 @@ type Period = 'week' | 'month' | 'year';
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
-  | 'group-detail' | 'add-points' | 'profile';
+  | 'group-detail' | 'add-points' | 'create-category' | 'profile';
 
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -73,6 +73,9 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [note, setNote] = useState('');
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatPoints, setNewCatPoints] = useState('');
+  const [newCatIcon, setNewCatIcon] = useState('');
   const [period, setPeriod] = useState<Period>('week');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -144,9 +147,32 @@ export default function App() {
   }
 
   async function loadCategories() {
-    const { data } = await supabase.from('point_categories').select('id, name, points, icon')
-      .eq('is_global', true).order('name');
+    const { data } = await supabase.from('point_categories')
+      .select('id, name, points, icon, is_global')
+      .or(`is_global.eq.true,created_by.eq.${session!.user.id}`)
+      .order('name');
     setCategories((data ?? []) as Category[]);
+  }
+
+  async function handleCreateCategory() {
+    const pts = parseInt(newCatPoints, 10);
+    if (!newCatName.trim()) { Alert.alert('Fehler', 'Bitte gib einen Namen ein.'); return; }
+    if (isNaN(pts) || pts <= 0) { Alert.alert('Fehler', 'Bitte gib eine gültige Punktzahl ein.'); return; }
+    setLoading(true);
+    const { error } = await supabase.from('point_categories').insert({
+      name: newCatName.trim(),
+      points: pts,
+      icon: newCatIcon.trim() || '⭐',
+      is_global: false,
+      created_by: session!.user.id,
+    });
+    if (error) Alert.alert('Fehler', error.message);
+    else {
+      setNewCatName(''); setNewCatPoints(''); setNewCatIcon('');
+      await loadCategories();
+      setScreen('add-points');
+    }
+    setLoading(false);
   }
 
   async function handleLogin() {
@@ -423,8 +449,8 @@ export default function App() {
         <TouchableOpacity style={s.btn} onPress={async () => { await loadCategories(); setScreen('add-points'); }}>
           <Text style={s.btnText}>+ Punkte vergeben</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.btn, s.btnOutline, s.btnDisabled]} disabled>
-          <Text style={s.btnOutlineText}>+ Eigene Kategorie (bald)</Text>
+        <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={async () => { await loadCategories(); setScreen('create-category'); }}>
+          <Text style={s.btnOutlineText}>+ Eigene Kategorie</Text>
         </TouchableOpacity>
       </View>
       <StatusBar style="auto" />
@@ -439,8 +465,22 @@ export default function App() {
         <Text style={s.headerSub}>für {partner?.name} · {selectedGroup?.name}</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
-        <Text style={s.sectionLabel}>Kategorie wählen</Text>
-        {categories.map(cat => (
+        {categories.filter(c => !c.is_global).length > 0 && (
+          <>
+            <Text style={s.sectionLabel}>Eigene Kategorien</Text>
+            {categories.filter(c => !c.is_global).map(cat => (
+              <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => setSelectedCategory(cat)}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
+                  <Text style={s.pts}>+{cat.points}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+            <Text style={[s.sectionLabel, { marginTop: 8 }]}>Standard-Kategorien</Text>
+          </>
+        )}
+        {!categories.some(c => !c.is_global) && <Text style={s.sectionLabel}>Kategorie wählen</Text>}
+        {categories.filter(c => c.is_global).map(cat => (
           <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => setSelectedCategory(cat)}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
@@ -457,6 +497,42 @@ export default function App() {
         {loading ? <ActivityIndicator /> : (
           <TouchableOpacity style={[s.btn, !selectedCategory && s.btnDisabled]} onPress={handleSavePoints} disabled={!selectedCategory}>
             <Text style={s.btnText}>{selectedCategory ? `${selectedCategory.points} Punkte speichern` : 'Kategorie wählen'}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'create-category') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => setScreen('add-points')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <Text style={s.headerTitle}>Eigene Kategorie</Text>
+        <Text style={s.headerSub}>Erstelle eine persönliche Punktekategorie</Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+        <Text style={s.sectionLabel}>Name</Text>
+        <TextInput style={s.input} placeholder="z.B. Abendspaziergang organisiert"
+          value={newCatName} onChangeText={setNewCatName} />
+
+        <Text style={s.sectionLabel}>Punkte</Text>
+        <TextInput style={s.input} placeholder="z.B. 10"
+          value={newCatPoints} onChangeText={setNewCatPoints}
+          keyboardType="numeric" />
+
+        <Text style={s.sectionLabel}>Emoji-Icon</Text>
+        <TextInput style={[s.input, { fontSize: 24, textAlign: 'center' }]}
+          placeholder="⭐" value={newCatIcon} onChangeText={setNewCatIcon}
+          maxLength={2} />
+        <Text style={{ fontSize: 12, color: '#aaa', textAlign: 'center', marginTop: -8 }}>
+          Tippe ein Emoji ein (leer lassen = ⭐)
+        </Text>
+      </ScrollView>
+      <View style={s.footer}>
+        {loading ? <ActivityIndicator /> : (
+          <TouchableOpacity style={s.btn} onPress={handleCreateCategory}>
+            <Text style={s.btnText}>Kategorie speichern</Text>
           </TouchableOpacity>
         )}
       </View>
