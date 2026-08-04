@@ -114,3 +114,19 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - `join_group_by_invite_code`-RPC liefert jetzt zusätzlich `created_by` zurück, damit der
   Client weiß, ob die beitretende Person Erstellerin ist
 - Migration: `supabase/migrations/20260804_22_delete_group_rpc.sql`
+
+## Feature: Partner-Profilbilder (2026-08-05)
+- Neue Spalte `partners.avatar_url`, neuer öffentlicher Storage-Bucket `avatars`
+  (Pfad-Schema `<partner_id>/<dateiname>`, RLS: nur Partner-Eigentümerin darf hochladen/
+  ändern/löschen, Lesen ist öffentlich)
+- Foto auswählen/ändern in Profil & Einstellungen (Bildauswahl mit quadratischem Zuschnitt,
+  Upload als Base64 → ArrayBuffer via `base64-arraybuffer`)
+- Neue wiederverwendbare Komponente `components/Avatar.tsx`: zeigt das Bild kreisrund an,
+  ohne Bild ein Kreis mit Anfangsbuchstabe auf deterministischer Hintergrundfarbe
+  (gleicher Name → immer gleiche Farbe)
+- Avatar prominent neben dem Namen auf der Badge-Seite (Männerprofil & Frauen-Ansicht
+  "Partner-Badges")
+- Gruppenkarten in "Meine Gruppen" zeigen jetzt die (sich überlappenden) Avatare aller
+  aktiven Partner der Gruppe
+- Neue Pakete: `expo-image-picker`, `base64-arraybuffer`
+- Migration: `supabase/migrations/20260804_23_partner_avatars.sql`

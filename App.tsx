@@ -11,18 +11,22 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { decode } from 'base64-arraybuffer';
 import { supabase } from './lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import BadgeGrid from './components/BadgeGrid';
+import Avatar from './components/Avatar';
 
-type Partner = { id: string; name: string };
+type Partner = { id: string; name: string; avatar_url?: string | null };
 type Group = { id: string; name: string; invite_code: string; created_by: string };
 type GroupMember = { user_id: string; partner: Partner | null };
+type GroupPartnerPreview = { id: string; name: string; avatar_url: string | null };
 type Category = { id: string; name: string; points: number; icon: string; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
 type RankingEntry = { partner_id: string; name: string; total: number };
 type EarnedBadge = { partner_id: string; icon: string; name: string };
-type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string } };
-type PartnerWithCode = { id: string; name: string; invite_code: string };
+type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string; avatar_url: string | null } };
+type PartnerWithCode = { id: string; name: string; invite_code: string; avatar_url: string | null };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null; created_by: string;
   partners: { name: string }; point_categories: { name: string };
@@ -131,6 +135,7 @@ export default function App() {
   const [selectedPartnerIdForPoints, setSelectedPartnerIdForPoints] = useState<string | null>(null);
   const [myAllPartners, setMyAllPartners] = useState<Partner[]>([]);
   const [viewedPartner, setViewedPartner] = useState<Partner | null>(null);
+  const [groupAvatarsMap, setGroupAvatarsMap] = useState<Record<string, GroupPartnerPreview[]>>({});
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -140,7 +145,7 @@ export default function App() {
   }, []);
 
   async function loadUserData(session: Session) {
-    const { data: pts } = await supabase.from('partners').select('id, name')
+    const { data: pts } = await supabase.from('partners').select('id, name, avatar_url')
       .eq('owner_user_id', session.user.id).order('created_at');
     const p = (pts ?? [])[0] ?? null;
     if (p) { setPartner(p); await loadGroups(session); return; }
@@ -152,7 +157,7 @@ export default function App() {
 
   async function loadManProfile(userId: string) {
     const { data } = await supabase.from('partner_connections')
-      .select('id, invite_code, connected_at, partners(id, name)')
+      .select('id, invite_code, connected_at, partners(id, name, avatar_url)')
       .eq('man_user_id', userId)
       .is('disconnected_at', null);
     setManConnections((data ?? []) as ManConnection[]);
@@ -184,8 +189,33 @@ export default function App() {
   async function loadGroups(session: Session) {
     const { data } = await supabase.from('group_members').select('groups(id, name, invite_code, created_by)')
       .eq('user_id', session.user.id);
-    setGroups(((data ?? []) as any[]).map(r => r.groups).filter(Boolean));
+    const gs = ((data ?? []) as any[]).map(r => r.groups).filter(Boolean) as Group[];
+    setGroups(gs);
     setScreen('groups');
+    loadGroupAvatarPreviews(gs.map(g => g.id));
+  }
+
+  async function loadGroupAvatarPreviews(groupIds: string[]) {
+    if (groupIds.length === 0) { setGroupAvatarsMap({}); return; }
+    const [{ data: memberRows }, { data: memberships }] = await Promise.all([
+      supabase.from('group_members').select('group_id, user_id').in('group_id', groupIds),
+      supabase.from('group_partner_memberships').select('group_id, partner_id, active').in('group_id', groupIds),
+    ]);
+    const userIds = Array.from(new Set((memberRows ?? []).map((m: any) => m.user_id)));
+    const { data: partnerRows } = await supabase.from('partners').select('id, name, avatar_url, owner_user_id').in('owner_user_id', userIds);
+    const activeMap = new Map<string, boolean>();
+    (memberships ?? []).forEach((m: any) => activeMap.set(`${m.group_id}:${m.partner_id}`, m.active));
+
+    const map: Record<string, GroupPartnerPreview[]> = {};
+    (memberRows ?? []).forEach((m: any) => {
+      ((partnerRows ?? []) as any[])
+        .filter(p => p.owner_user_id === m.user_id)
+        .forEach(p => {
+          if ((activeMap.get(`${m.group_id}:${p.id}`) ?? true) === false) return;
+          (map[m.group_id] ??= []).push({ id: p.id, name: p.name, avatar_url: p.avatar_url });
+        });
+    });
+    setGroupAvatarsMap(map);
   }
 
   async function loadRankingForGroup(groupId: string, p: Period) {
@@ -648,7 +678,7 @@ export default function App() {
 
   async function loadProfileData() {
     const { data: pts } = await supabase.from('partners')
-      .select('id, name').eq('owner_user_id', session!.user.id).order('created_at');
+      .select('id, name, avatar_url').eq('owner_user_id', session!.user.id).order('created_at');
     if (!pts || pts.length === 0) { setMyPartners([]); return; }
     const { data: conns } = await supabase.from('partner_connections')
       .select('partner_id, invite_code').in('partner_id', pts.map((p: any) => p.id));
@@ -656,7 +686,7 @@ export default function App() {
     (conns ?? []).forEach((c: any) => { codeMap[c.partner_id] = c.invite_code; });
     const nameMap: Record<string, string> = {};
     pts.forEach((p: any) => { nameMap[p.id] = p.name; });
-    setMyPartners(pts.map((p: any) => ({ id: p.id, name: p.name, invite_code: codeMap[p.id] ?? '—' })));
+    setMyPartners(pts.map((p: any) => ({ id: p.id, name: p.name, invite_code: codeMap[p.id] ?? '—', avatar_url: p.avatar_url })));
     setEditPartnerNames(nameMap);
     setEditEmail(session?.user.email ?? '');
   }
@@ -695,6 +725,26 @@ export default function App() {
     setLoading(false);
   }
 
+  async function handlePickAvatar(partnerId: string) {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert('Zugriff verweigert', 'Bitte erlaube den Zugriff auf deine Fotos in den Einstellungen.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.7, base64: true,
+    });
+    if (result.canceled || !result.assets[0].base64) return;
+    setLoading(true);
+    const path = `${partnerId}/${Date.now()}.jpg`;
+    const { error: uploadErr } = await supabase.storage.from('avatars')
+      .upload(path, decode(result.assets[0].base64), { contentType: 'image/jpeg', upsert: true });
+    if (uploadErr) { Alert.alert('Fehler beim Hochladen', uploadErr.message); setLoading(false); return; }
+    const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+    const { error: updateErr } = await supabase.from('partners').update({ avatar_url: pub.publicUrl }).eq('id', partnerId);
+    if (updateErr) { Alert.alert('Fehler', updateErr.message); setLoading(false); return; }
+    setMyPartners(prev => prev.map(p => p.id === partnerId ? { ...p, avatar_url: pub.publicUrl } : p));
+    if (partner?.id === partnerId) setPartner(prev => prev ? { ...prev, avatar_url: pub.publicUrl } : prev);
+    setLoading(false);
+  }
+
   async function handleAddPartnerFromProfile() {
     const name = newPartnerNameForProfile.trim();
     if (!name) { Alert.alert('Fehler', 'Bitte gib einen Namen ein.'); return; }
@@ -706,7 +756,7 @@ export default function App() {
     const { error: connError } = await supabase.from('partner_connections')
       .insert({ partner_id: data.id, invite_code: code });
     if (connError) { Alert.alert('Fehler', connError.message); setLoading(false); return; }
-    setMyPartners(prev => [...prev, { id: data.id, name: data.name, invite_code: code }]);
+    setMyPartners(prev => [...prev, { id: data.id, name: data.name, invite_code: code, avatar_url: null }]);
     setEditPartnerNames(prev => ({ ...prev, [data.id]: data.name }));
     setNewPartnerNameForProfile('');
     setShowAddPartnerForm(false);
@@ -872,6 +922,15 @@ export default function App() {
             {groups.map(item => (
               <View key={item.id} style={s.card}>
                 <TouchableOpacity onPress={() => openGroup(item)}>
+                  {(groupAvatarsMap[item.id]?.length ?? 0) > 0 && (
+                    <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+                      {groupAvatarsMap[item.id].map((p, i) => (
+                        <View key={p.id} style={{ marginLeft: i === 0 ? 0 : -12, borderWidth: 2, borderColor: '#fff', borderRadius: 18 }}>
+                          <Avatar uri={p.avatar_url} name={p.name} size={32} />
+                        </View>
+                      ))}
+                    </View>
+                  )}
                   <Text style={s.cardTitle}>{item.name}</Text>
                   <Text style={s.cardSub}>Code: {item.invite_code} ›</Text>
                 </TouchableOpacity>
@@ -1364,7 +1423,10 @@ export default function App() {
           ? <Text style={s.empty}>Noch keine Verbindungen aktiv.</Text>
           : manConnections.map(conn => (
             <View key={conn.id} style={{ gap: 12 }}>
-              {manConnections.length > 1 && <Text style={s.sectionLabel}>{(conn.partners as any).name}</Text>}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Avatar uri={(conn.partners as any).avatar_url} name={(conn.partners as any).name} size={56} />
+                <Text style={s.headerTitle}>{(conn.partners as any).name}</Text>
+              </View>
               <BadgeGrid partnerId={(conn.partners as any).id} />
             </View>
           ))
@@ -1404,8 +1466,13 @@ export default function App() {
     <View style={s.screen}>
       <View style={s.header}>
         <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
-        <Text style={s.headerTitle}>{viewedPartner?.name}</Text>
-        <Text style={s.headerSub}>Badges & Erfolge</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 }}>
+          {viewedPartner && <Avatar uri={viewedPartner.avatar_url} name={viewedPartner.name} size={48} />}
+          <View>
+            <Text style={s.headerTitle}>{viewedPartner?.name}</Text>
+            <Text style={s.headerSub}>Badges & Erfolge</Text>
+          </View>
+        </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 20 }}>
         {viewedPartner && <BadgeGrid partnerId={viewedPartner.id} />}
@@ -1451,6 +1518,10 @@ export default function App() {
         <Text style={[s.sectionLabel, { marginTop: 4 }]}>Meine Partner & Einladungscodes</Text>
         {myPartners.map(p => (
           <View key={p.id} style={s.card}>
+            <TouchableOpacity onPress={() => handlePickAvatar(p.id)} style={{ alignItems: 'center', marginBottom: 12 }}>
+              <Avatar uri={p.avatar_url} name={editPartnerNames[p.id] ?? p.name} size={72} />
+              <Text style={{ fontSize: 12, color: '#3ECF8E', marginTop: 6, fontWeight: '600' }}>Foto ändern</Text>
+            </TouchableOpacity>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <TextInput
                 style={[s.input, { flex: 1, marginBottom: 0 }]}
