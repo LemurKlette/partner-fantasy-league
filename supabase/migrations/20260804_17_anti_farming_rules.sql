@@ -4,7 +4,8 @@
 -- auf point_entries greift, unabhaengig davon, welchen "points"-Wert der
 -- Client mitschickt.
 
-alter table point_entries add column if not exists capped_reason text; -- 'daily_limit' | 'task_repeat' | null
+-- capped_reason: 'daily_limit', 'task_repeat' oder null
+alter table point_entries add column if not exists capped_reason text;
 
 create or replace function apply_point_entry_rules()
 returns trigger
