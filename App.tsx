@@ -149,7 +149,7 @@ export default function App() {
   async function loadCategories() {
     const { data } = await supabase.from('point_categories')
       .select('id, name, points, icon, is_global')
-      .or(`is_global.eq.true,created_by.eq.${session!.user.id}`)
+      .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
       .order('name');
     setCategories((data ?? []) as Category[]);
   }
@@ -165,6 +165,7 @@ export default function App() {
       icon: newCatIcon.trim() || '⭐',
       is_global: false,
       created_by: session!.user.id,
+      group_id: selectedGroup!.id,
     });
     if (error) Alert.alert('Fehler', error.message);
     else {
