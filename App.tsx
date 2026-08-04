@@ -20,6 +20,7 @@ type GroupMember = { user_id: string; partner: Partner | null };
 type Category = { id: string; name: string; points: number; icon: string; is_global: boolean };
 type RankingEntry = { partner_id: string; name: string; total: number };
 type EarnedBadge = { partner_id: string; icon: string; name: string };
+type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string } };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null;
   partners: { name: string }; point_categories: { name: string };
@@ -28,7 +29,13 @@ type Period = 'week' | 'month' | 'year';
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
-  | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help';
+  | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help'
+  | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile';
+
+function generatePartnerCode(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return 'P-' + Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
 
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -80,6 +87,9 @@ export default function App() {
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [helpTab, setHelpTab] = useState<'frauen' | 'maenner' | 'faq'>('frauen');
   const [helpReturnScreen, setHelpReturnScreen] = useState<Screen>('groups');
+  const [generatedPartnerCode, setGeneratedPartnerCode] = useState('');
+  const [partnerInviteInput, setPartnerInviteInput] = useState('');
+  const [manConnections, setManConnections] = useState<ManConnection[]>([]);
   const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
   const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
   const [period, setPeriod] = useState<Period>('week');
@@ -101,9 +111,42 @@ export default function App() {
   async function loadUserData(session: Session) {
     const { data: p } = await supabase.from('partners').select('id, name')
       .eq('owner_user_id', session.user.id).maybeSingle();
-    if (!p) { setScreen('create-partner'); return; }
-    setPartner(p);
-    await loadGroups(session);
+    if (p) { setPartner(p); await loadGroups(session); return; }
+    const { data: conns } = await supabase.from('partner_connections')
+      .select('id').eq('man_user_id', session.user.id).is('disconnected_at', null).limit(1);
+    if (conns && conns.length > 0) { await loadManProfile(session.user.id); return; }
+    setScreen('onboarding-choice');
+  }
+
+  async function loadManProfile(userId: string) {
+    const { data } = await supabase.from('partner_connections')
+      .select('id, invite_code, connected_at, partners(id, name)')
+      .eq('man_user_id', userId)
+      .is('disconnected_at', null);
+    setManConnections((data ?? []) as ManConnection[]);
+    setScreen('man-profile');
+  }
+
+  async function handleEnterPartnerInviteCode() {
+    if (!partnerInviteInput.trim()) return;
+    setLoading(true);
+    const { error } = await supabase.rpc('connect_to_partner', { code: partnerInviteInput.trim().toUpperCase() });
+    if (error) Alert.alert('Fehler', error.message);
+    else { setPartnerInviteInput(''); await loadManProfile(session!.user.id); }
+    setLoading(false);
+  }
+
+  async function handleDisconnect(connectionId: string, pName: string) {
+    Alert.alert('Verbindung trennen', `Wirklich von "${pName}" trennen? Deine bisherigen Punkte bleiben erhalten.`, [
+      { text: 'Abbrechen', style: 'cancel' },
+      { text: 'Trennen', style: 'destructive', onPress: async () => {
+        const { error } = await supabase.from('partner_connections')
+          .update({ disconnected_at: new Date().toISOString() })
+          .eq('id', connectionId);
+        if (error) Alert.alert('Fehler', error.message);
+        else setManConnections(prev => prev.filter(c => c.id !== connectionId));
+      }},
+    ]);
   }
 
   async function loadGroups(session: Session) {
@@ -306,8 +349,14 @@ export default function App() {
     setLoading(true);
     const { data, error } = await supabase.from('partners')
       .insert({ owner_user_id: session!.user.id, name: partnerName.trim() }).select('id, name').single();
-    if (error) Alert.alert('Fehler', error.message);
-    else { setPartner(data); await loadGroups(session!); }
+    if (error) { Alert.alert('Fehler', error.message); setLoading(false); return; }
+    setPartner(data);
+    const code = generatePartnerCode();
+    const { error: connError } = await supabase.from('partner_connections')
+      .insert({ partner_id: data.id, invite_code: code });
+    if (connError) { Alert.alert('Fehler beim Code-Generieren', connError.message); setLoading(false); return; }
+    setGeneratedPartnerCode(code);
+    setScreen('show-partner-code');
     setLoading(false);
   }
 
@@ -414,6 +463,23 @@ export default function App() {
     </View>
   );
 
+  if (screen === 'onboarding-choice') return (
+    <View style={s.center}>
+      <Text style={s.title}>Willkommen! 👋</Text>
+      <Text style={s.subtitle}>Wie möchtest du die App nutzen?</Text>
+      <TouchableOpacity style={[s.btn, { marginBottom: 12 }]} onPress={() => setScreen('create-partner')}>
+        <Text style={s.btnText}>Ich bin eine Frau 👩</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setScreen('enter-invite-code')}>
+        <Text style={s.btnOutlineText}>Ich habe einen Einladungscode 📬</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={handleLogout} style={{ marginTop: 20 }}>
+        <Text style={[s.link, { color: '#aaa' }]}>Abmelden</Text>
+      </TouchableOpacity>
+      <StatusBar style="auto" />
+    </View>
+  );
+
   if (screen === 'create-partner') return (
     <View style={s.center}>
       <Text style={s.title}>Partner anlegen</Text>
@@ -422,6 +488,27 @@ export default function App() {
       {loading ? <ActivityIndicator style={{ marginTop: 16 }} /> : (
         <TouchableOpacity style={s.btn} onPress={handleCreatePartner}><Text style={s.btnText}>Weiter</Text></TouchableOpacity>
       )}
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'show-partner-code') return (
+    <View style={s.center}>
+      <Text style={s.title}>Partner angelegt! 🎉</Text>
+      <Text style={s.subtitle}>Schick deinem Partner diesen Code:</Text>
+      <View style={{ backgroundColor: '#f0fdf9', borderRadius: 12, padding: 24, marginBottom: 16, alignItems: 'center', width: '100%' }}>
+        <Text style={{ fontSize: 26, fontWeight: 'bold', letterSpacing: 3, color: '#3ECF8E' }}>{generatedPartnerCode}</Text>
+      </View>
+      <Text style={{ fontSize: 13, color: '#aaa', textAlign: 'center', marginBottom: 20 }}>
+        Dein Partner gibt diesen Code beim ersten Login ein, um sich mit dir zu verbinden.
+      </Text>
+      <TouchableOpacity style={[s.btn, s.btnOutline, { marginBottom: 12 }]}
+        onPress={() => Share.share({ message: `Dein Einladungscode für die Partner Fantasy League: ${generatedPartnerCode}` })}>
+        <Text style={s.btnOutlineText}>Code teilen</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={s.btn} onPress={() => loadGroups(session!)}>
+        <Text style={s.btnText}>Weiter zur App →</Text>
+      </TouchableOpacity>
       <StatusBar style="auto" />
     </View>
   );
@@ -800,6 +887,72 @@ export default function App() {
           ))}
         </>}
       </ScrollView>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'enter-invite-code') return (
+    <View style={s.center}>
+      <Text style={s.title}>Partner-Code eingeben</Text>
+      <Text style={s.subtitle}>Gib den Code ein, den dir deine Partnerin geschickt hat.</Text>
+      <TextInput
+        style={[s.input, { fontSize: 18, letterSpacing: 3, textAlign: 'center' }]}
+        placeholder="P-XXXXXXXX"
+        value={partnerInviteInput}
+        onChangeText={setPartnerInviteInput}
+        autoCapitalize="characters"
+      />
+      {loading ? <ActivityIndicator style={{ marginTop: 16 }} /> : (
+        <TouchableOpacity style={s.btn} onPress={handleEnterPartnerInviteCode}>
+          <Text style={s.btnText}>Verbinden</Text>
+        </TouchableOpacity>
+      )}
+      {manConnections.length > 0 && (
+        <TouchableOpacity onPress={() => setScreen('man-profile')}>
+          <Text style={[s.link, { marginTop: 12 }]}>← Zurück zum Profil</Text>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity onPress={handleLogout} style={{ marginTop: 8 }}>
+        <Text style={[s.link, { color: '#aaa' }]}>Abmelden</Text>
+      </TouchableOpacity>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'man-profile') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <Text style={s.headerTitle}>Mein Profil</Text>
+        <Text style={s.headerSub}>{session?.user.email}</Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+        <Text style={s.sectionLabel}>Verbunden mit</Text>
+        {manConnections.length === 0
+          ? <Text style={s.empty}>Noch keine Verbindungen aktiv.</Text>
+          : manConnections.map(conn => (
+            <View key={conn.id} style={s.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cardTitle}>{(conn.partners as any).name}</Text>
+                  <Text style={s.cardSub}>Code: {conn.invite_code}</Text>
+                </View>
+                <TouchableOpacity onPress={() => handleDisconnect(conn.id, (conn.partners as any).name)}
+                  style={{ backgroundColor: '#fff0f0', borderRadius: 6, padding: 8 }}>
+                  <Text style={{ color: '#ff4444', fontSize: 13, fontWeight: '600' }}>Trennen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+        }
+        <TouchableOpacity style={[s.btn, s.btnOutline, { marginTop: 8 }]} onPress={() => setScreen('enter-invite-code')}>
+          <Text style={s.btnOutlineText}>+ Weiteren Code eingeben</Text>
+        </TouchableOpacity>
+      </ScrollView>
+      <View style={s.footer}>
+        <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={handleLogout}>
+          <Text style={s.btnOutlineText}>Abmelden</Text>
+        </TouchableOpacity>
+      </View>
       <StatusBar style="auto" />
     </View>
   );
