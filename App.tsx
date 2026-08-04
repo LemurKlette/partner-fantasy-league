@@ -27,6 +27,7 @@ type ActivityEntry = {
   partners: { name: string }; point_categories: { name: string };
 };
 type Period = 'week' | 'month' | 'year';
+type GroupPartnerMembership = { partner_id: string; active: boolean };
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
@@ -108,6 +109,9 @@ export default function App() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [loading, setLoading] = useState(false);
+  const [groupPartnerMemberships, setGroupPartnerMemberships] = useState<GroupPartnerMembership[]>([]);
+  const [selectedPartnerIdForPoints, setSelectedPartnerIdForPoints] = useState<string | null>(null);
+  const [myAllPartners, setMyAllPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -117,8 +121,9 @@ export default function App() {
   }, []);
 
   async function loadUserData(session: Session) {
-    const { data: p } = await supabase.from('partners').select('id, name')
-      .eq('owner_user_id', session.user.id).maybeSingle();
+    const { data: pts } = await supabase.from('partners').select('id, name')
+      .eq('owner_user_id', session.user.id).order('created_at');
+    const p = (pts ?? [])[0] ?? null;
     if (p) { setPartner(p); await loadGroups(session); return; }
     const { data: conns } = await supabase.from('partner_connections')
       .select('id').eq('man_user_id', session.user.id).is('disconnected_at', null).limit(1);
@@ -169,11 +174,15 @@ export default function App() {
     const { data: memberRows } = await supabase.from('group_members').select('user_id').eq('group_id', groupId);
     const userIds = (memberRows ?? []).map((m: any) => m.user_id);
     const { data: partnerRows } = await supabase.from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds);
+    const { data: memberships } = await supabase.from('group_partner_memberships')
+      .select('partner_id, active').eq('group_id', groupId).eq('active', true);
+    const activeIds = new Set((memberships ?? []).map((m: any) => m.partner_id));
+    const activePartners = ((partnerRows ?? []) as any[]).filter(pr => activeIds.has(pr.id));
     const { data: entries } = await supabase.from('point_entries').select('partner_id, points')
       .eq('group_id', groupId).gte('created_at', getStartDate(p));
     const totals: Record<string, number> = {};
     (entries ?? []).forEach((e: any) => { totals[e.partner_id] = (totals[e.partner_id] || 0) + e.points; });
-    setRanking(((partnerRows ?? []) as any[])
+    setRanking(activePartners
       .map(pr => ({ partner_id: pr.id, name: pr.name, total: totals[pr.id] || 0 }))
       .sort((a, b) => b.total - a.total));
     setRankingLoading(false);
@@ -240,6 +249,31 @@ export default function App() {
     const { data: memberRows } = await supabase.from('group_members').select('user_id').eq('group_id', group.id);
     const userIds = (memberRows ?? []).map((m: any) => m.user_id);
     const { data: partnerRows } = await supabase.from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds);
+
+    // Meine eigenen Partner laden (alle, nicht nur den ersten)
+    const { data: myPts } = await supabase.from('partners').select('id, name')
+      .eq('owner_user_id', session!.user.id).order('created_at');
+    const myPtsList = (myPts ?? []) as Partner[];
+    setMyAllPartners(myPtsList);
+
+    // Partner-Mitgliedschaften laden
+    const { data: memberships } = await supabase.from('group_partner_memberships')
+      .select('partner_id, active').eq('group_id', group.id);
+    const membershipMap = new Map<string, boolean>((memberships ?? []).map((m: any) => [m.partner_id, m.active as boolean]));
+
+    // Neue Partner automatisch registrieren (die noch keinen Eintrag haben)
+    const unregistered = myPtsList.map(p => p.id).filter(id => !membershipMap.has(id));
+    for (const pid of unregistered) {
+      await supabase.from('group_partner_memberships').insert({ group_id: group.id, partner_id: pid, active: true });
+      membershipMap.set(pid, true);
+    }
+
+    setGroupPartnerMemberships(Array.from(membershipMap.entries()).map(([partner_id, active]) => ({ partner_id, active })));
+
+    // Ersten aktiven Partner vorauswählen
+    const firstActive = myPtsList.find(p => membershipMap.get(p.id) !== false);
+    setSelectedPartnerIdForPoints(firstActive?.id ?? myPtsList[0]?.id ?? null);
+
     setGroupMembers(userIds.map(uid => ({
       user_id: uid,
       partner: (partnerRows ?? []).find((p: any) => p.owner_user_id === uid) ?? null,
@@ -248,6 +282,45 @@ export default function App() {
     await Promise.all([loadRankingForGroup(group.id, 'week'), loadActivityLog(group.id), loadEarnedBadges(group.id)]);
     setScreen('group-detail');
     setLoading(false);
+  }
+
+  async function handleTogglePartnerMembership(partnerId: string, currentActive: boolean) {
+    const { error } = await supabase.from('group_partner_memberships')
+      .update({ active: !currentActive })
+      .eq('group_id', selectedGroup!.id)
+      .eq('partner_id', partnerId);
+    if (error) { Alert.alert('Fehler', error.message); return; }
+    setGroupPartnerMemberships(prev => prev.map(m =>
+      m.partner_id === partnerId ? { ...m, active: !currentActive } : m
+    ));
+    if (!currentActive === false && selectedPartnerIdForPoints === partnerId) {
+      const nextActive = myAllPartners.find(p => p.id !== partnerId && groupPartnerMemberships.find(m => m.partner_id === p.id)?.active);
+      setSelectedPartnerIdForPoints(nextActive?.id ?? null);
+    }
+    await loadRankingForGroup(selectedGroup!.id, period);
+  }
+
+  async function handleDeletePartner(partnerId: string, partnerName: string) {
+    Alert.alert(
+      'Partner loeschen',
+      `"${partnerName}" wirklich loeschen? Alle Punkte und Verbindungen werden ebenfalls geloescht.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Loeschen', style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            const { error } = await supabase.rpc('delete_partner', { p_partner_id: partnerId });
+            if (error) { Alert.alert('Fehler', error.message); }
+            else {
+              setMyPartners(prev => prev.filter(p => p.id !== partnerId));
+              if (partner?.id === partnerId) setPartner(null);
+            }
+            setLoading(false);
+          },
+        },
+      ]
+    );
   }
 
   async function loadCategories() {
@@ -414,9 +487,11 @@ export default function App() {
 
   async function handleSavePoints() {
     if (!selectedCategory) { Alert.alert('Fehler', 'Bitte wähle eine Kategorie.'); return; }
+    const effectivePartnerId = selectedPartnerIdForPoints ?? partner!.id;
+    const effectivePartnerName = myAllPartners.find(p => p.id === effectivePartnerId)?.name ?? partner?.name ?? '';
     setLoading(true);
     const { error } = await supabase.from('point_entries').insert({
-      partner_id: partner!.id, group_id: selectedGroup!.id,
+      partner_id: effectivePartnerId, group_id: selectedGroup!.id,
       category_id: selectedCategory.id, points: selectedCategory.points,
       note: note.trim() || null, created_by: session!.user.id,
     });
@@ -425,8 +500,8 @@ export default function App() {
       setSelectedCategory(null);
       setNote('');
       await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
-      await checkAndAwardBadges(partner!.id, selectedGroup!.id);
-      Alert.alert('✅ Gespeichert!', `${selectedCategory.points} Punkte für ${partner!.name} vergeben.`);
+      await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
+      Alert.alert('Gespeichert!', `${selectedCategory.points} Punkte fuer ${effectivePartnerName} vergeben.`);
       setScreen('group-detail');
     }
     setLoading(false);
@@ -750,6 +825,35 @@ export default function App() {
               ))
             }
 
+            {myAllPartners.length > 0 && (
+              <>
+                <Text style={s.sectionLabel}>Meine Partner in dieser Gruppe</Text>
+                {myAllPartners.map(mp => {
+                  const membership = groupPartnerMemberships.find(m => m.partner_id === mp.id);
+                  const isActive = membership?.active ?? true;
+                  return (
+                    <View key={mp.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.cardTitle}>{mp.name}</Text>
+                        <Text style={{ fontSize: 12, color: isActive ? '#3ECF8E' : '#bbb', marginTop: 2 }}>
+                          {isActive ? 'Aktiv im Ranking' : 'Deaktiviert'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+                          backgroundColor: isActive ? '#fff0f0' : '#f0fff8',
+                          borderWidth: 1, borderColor: isActive ? '#ffc0c0' : '#a0e8c8' }}
+                        onPress={() => handleTogglePartnerMembership(mp.id, isActive)}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? '#ff4444' : '#3ECF8E' }}>
+                          {isActive ? 'Deaktivieren' : 'Aktivieren'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </>
+            )}
+
             <TouchableOpacity style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
               onPress={() => setMembersExpanded(!membersExpanded)}>
               <Text style={s.sectionLabel}>Gruppenmitglieder</Text>
@@ -775,14 +879,38 @@ export default function App() {
     </View>
   );
 
-  if (screen === 'add-points') return (
+  if (screen === 'add-points') {
+    const activePartners = myAllPartners.filter(mp => groupPartnerMemberships.find(m => m.partner_id === mp.id)?.active !== false);
+    const pointsPartnerName = activePartners.find(p => p.id === selectedPartnerIdForPoints)?.name ?? partner?.name ?? '';
+    return (
     <View style={s.screen}>
       <View style={s.header}>
         <TouchableOpacity onPress={() => setScreen('group-detail')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
         <Text style={s.headerTitle}>Punkte vergeben</Text>
-        <Text style={s.headerSub}>für {partner?.name} · {selectedGroup?.name}</Text>
+        <Text style={s.headerSub}>{selectedGroup?.name}</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+        {activePartners.length > 1 && (
+          <>
+            <Text style={s.sectionLabel}>Fuer wen?</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+              {activePartners.map(ap => (
+                <TouchableOpacity key={ap.id}
+                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+                    backgroundColor: selectedPartnerIdForPoints === ap.id ? '#3ECF8E' : '#f5f5f5',
+                    borderWidth: 1, borderColor: selectedPartnerIdForPoints === ap.id ? '#3ECF8E' : '#ddd' }}
+                  onPress={() => setSelectedPartnerIdForPoints(ap.id)}>
+                  <Text style={{ color: selectedPartnerIdForPoints === ap.id ? '#fff' : '#333', fontWeight: '600', fontSize: 14 }}>
+                    {ap.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+        {activePartners.length === 1 && (
+          <Text style={{ fontSize: 14, color: '#888', marginBottom: 4 }}>fuer {pointsPartnerName}</Text>
+        )}
         {categories.filter(c => !c.is_global).length > 0 && (
           <>
             <Text style={s.sectionLabel}>Eigene Kategorien</Text>
@@ -820,7 +948,7 @@ export default function App() {
       </View>
       <StatusBar style="auto" />
     </View>
-  );
+  ); }
 
   if (screen === 'manage-categories') return (
     <View style={s.screen}>
@@ -1091,12 +1219,19 @@ export default function App() {
         <Text style={[s.sectionLabel, { marginTop: 4 }]}>Meine Partner & Einladungscodes</Text>
         {myPartners.map(p => (
           <View key={p.id} style={s.card}>
-            <TextInput
-              style={[s.input, { marginBottom: 8 }]}
-              value={editPartnerNames[p.id] ?? p.name}
-              onChangeText={v => setEditPartnerNames(prev => ({ ...prev, [p.id]: v }))}
-              placeholder="Name des Partners"
-            />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <TextInput
+                style={[s.input, { flex: 1, marginBottom: 0 }]}
+                value={editPartnerNames[p.id] ?? p.name}
+                onChangeText={v => setEditPartnerNames(prev => ({ ...prev, [p.id]: v }))}
+                placeholder="Name des Partners"
+              />
+              <TouchableOpacity
+                style={{ padding: 8, backgroundColor: '#fff0f0', borderRadius: 8, borderWidth: 1, borderColor: '#ffc0c0' }}
+                onPress={() => handleDeletePartner(p.id, editPartnerNames[p.id] ?? p.name)}>
+                <Text style={{ fontSize: 16 }}>🗑️</Text>
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity style={[s.btn, { marginBottom: 14 }]}
               onPress={() => handleUpdatePartnerName(p.id)} disabled={loading}>
               <Text style={s.btnText}>Name speichern</Text>
@@ -1107,8 +1242,8 @@ export default function App() {
                 <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#3ECF8E', letterSpacing: 2 }}>{p.invite_code}</Text>
               </View>
               <TouchableOpacity style={s.codeBtn}
-                onPress={() => Share.share({ message: `Dein Einladungscode für die Partner Fantasy League: ${p.invite_code}` })}>
-                <Text style={s.codeBtnText}>Teilen 🔗</Text>
+                onPress={() => Share.share({ message: `Dein Einladungscode fuer die Partner Fantasy League: ${p.invite_code}` })}>
+                <Text style={s.codeBtnText}>Teilen</Text>
               </TouchableOpacity>
             </View>
           </View>
