@@ -73,14 +73,14 @@ export default function BadgeGrid({ partnerId }: { partnerId: string }) {
           <Text style={s.groupLabel}>{TYPE_LABELS[type]}</Text>
           <View style={s.grid}>
             {grouped[type].map(b => (
-              <View key={b.id} style={[s.tile, !b.earned && s.tileMuted]}>
+              <View key={b.id} style={s.tile}>
                 <View>
                   <Text style={[s.icon, !b.earned && s.iconMuted]}>{b.icon}</Text>
                   {b.count > 1 && (
                     <View style={s.countBubble}><Text style={s.countText}>×{b.count}</Text></View>
                   )}
                 </View>
-                <Text style={[s.name, !b.earned && s.nameMuted]} numberOfLines={2}>{b.name}</Text>
+                <Text style={s.name} numberOfLines={2}>{b.name}</Text>
                 {b.progressCurrent !== null && b.trigger_value != null && (
                   <>
                     <View style={s.progressTrack}>
@@ -103,11 +103,9 @@ const s = StyleSheet.create({
   groupLabel: { fontSize: 12, fontWeight: '600', color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   tile: { width: '30%', backgroundColor: '#fff', borderRadius: 12, padding: 10, alignItems: 'center', gap: 4, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  tileMuted: { backgroundColor: '#f7f7f7' },
   icon: { fontSize: 28 },
   iconMuted: { opacity: 0.25 },
   name: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
-  nameMuted: { color: '#bbb' },
   countBubble: { position: 'absolute', right: -8, bottom: -4, backgroundColor: '#3ECF8E', borderRadius: 10, paddingHorizontal: 5, paddingVertical: 1 },
   countText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
   progressTrack: { width: '100%', height: 4, backgroundColor: '#eee', borderRadius: 2, marginTop: 2 },
