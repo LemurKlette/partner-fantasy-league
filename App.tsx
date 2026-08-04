@@ -22,7 +22,7 @@ type RankingEntry = { partner_id: string; name: string; total: number };
 type EarnedBadge = { partner_id: string; icon: string; name: string };
 type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string } };
 type ActivityEntry = {
-  id: string; points: number; created_at: string; note: string | null;
+  id: string; points: number; created_at: string; note: string | null; created_by: string;
   partners: { name: string }; point_categories: { name: string };
 };
 type Period = 'week' | 'month' | 'year';
@@ -220,7 +220,7 @@ export default function App() {
 
   async function loadActivityLog(groupId: string) {
     const { data } = await supabase.from('point_entries')
-      .select('id, points, created_at, note, partners(name), point_categories(name)')
+      .select('id, points, created_at, note, created_by, partners(name), point_categories(name)')
       .eq('group_id', groupId).order('created_at', { ascending: false }).limit(10);
     setActivityLog((data ?? []) as ActivityEntry[]);
   }
@@ -292,6 +292,20 @@ export default function App() {
       setScreen('group-detail');
     }
     setLoading(false);
+  }
+
+  async function handleDeletePointEntry(entryId: string) {
+    Alert.alert('Eintrag löschen', 'Diesen Punkt-Eintrag wirklich löschen? Das kann nicht rückgängig gemacht werden.', [
+      { text: 'Abbrechen', style: 'cancel' },
+      { text: 'Löschen', style: 'destructive', onPress: async () => {
+        const { error } = await supabase.from('point_entries').delete().eq('id', entryId);
+        if (error) Alert.alert('Fehler', error.message);
+        else await Promise.all([
+          loadRankingForGroup(selectedGroup!.id, period),
+          loadActivityLog(selectedGroup!.id),
+        ]);
+      }},
+    ]);
   }
 
   async function handleDeleteCustomCategory(catId: string, catName: string) {
@@ -642,9 +656,16 @@ export default function App() {
               ? <Text style={s.empty}>Noch keine Einträge in dieser Gruppe.</Text>
               : activityLog.map(entry => (
                 <View key={entry.id} style={s.card}>
-                  <Text style={s.cardTitle}>
-                    {(entry.partners as any).name} hat {(entry.point_categories as any).name} erledigt
-                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>
+                      {(entry.partners as any).name} hat {(entry.point_categories as any).name} erledigt
+                    </Text>
+                    {entry.created_by === session?.user.id && (
+                      <TouchableOpacity onPress={() => handleDeletePointEntry(entry.id)} style={{ padding: 4 }}>
+                        <Text style={{ fontSize: 15, color: '#ccc' }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                     <Text style={[s.cardSub, { flex: 1, marginRight: 8 }]}>{entry.note ? `„${entry.note}"` : ''}</Text>
                     <Text style={[s.pts, { fontSize: 13 }]}>+{entry.points} · {timeAgo(entry.created_at)}</Text>
