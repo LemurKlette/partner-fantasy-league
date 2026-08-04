@@ -208,35 +208,126 @@ export default function App() {
     })));
   }
 
+  function mondayOf(d: Date): Date {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    const day = x.getDay();
+    x.setDate(x.getDate() - (day === 0 ? 6 : day - 1));
+    return x;
+  }
+  function weekKeyOf(dateStr: string): string {
+    return mondayOf(new Date(dateStr)).toISOString().slice(0, 10);
+  }
+  function monthKeyOf(dateStr: string): string {
+    const d = new Date(dateStr);
+    return `${d.getFullYear()}-${d.getMonth()}`;
+  }
+
+  // Badge-Bedingungen werden global (ueber alle Gruppen des Partners) geprueft,
+  // Typ 1/2/3/5 sind partnerweite Erfolge. Nur Typ 4 (Saisontitel) ist pro
+  // Gruppe und wird serverseitig per pg_cron vergeben (siehe award_period_title).
   async function checkAndAwardBadges(partnerId: string, groupId: string) {
-    const [{ data: allBadges }, { data: earnedRows }, { data: allEntries }, { data: weekEntries }, { data: monthEntries }] = await Promise.all([
-      supabase.from('badges').select('*'),
-      supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId).eq('group_id', groupId),
-      supabase.from('point_entries').select('points, point_categories(category_tag)').eq('partner_id', partnerId).eq('group_id', groupId),
-      supabase.from('point_entries').select('points').eq('partner_id', partnerId).eq('group_id', groupId).gte('created_at', getStartDate('week')),
-      supabase.from('point_entries').select('points').eq('partner_id', partnerId).eq('group_id', groupId).gte('created_at', getStartDate('month')),
+    const [{ data: allBadges }, { data: earnedRows }, { data: allEntriesRaw }] = await Promise.all([
+      supabase.from('badges').select('*').neq('badge_type', 4),
+      supabase.from('partner_badges').select('badge_id, period_key').eq('partner_id', partnerId),
+      supabase.from('point_entries')
+        .select('points, created_at, without_request, point_categories(name, category_tag, tier, is_global)')
+        .eq('partner_id', partnerId),
     ]);
+    const allEntries = (allEntriesRaw ?? []) as any[];
     const earnedIds = new Set((earnedRows ?? []).map((b: any) => b.badge_id));
-    const totalPoints = (allEntries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
-    const weekPoints = (weekEntries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
-    const monthPoints = (monthEntries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
+    const earnedPeriodKeys = new Set((earnedRows ?? []).map((b: any) => `${b.badge_id}:${b.period_key ?? ''}`));
+
+    const totalPoints = allEntries.reduce((sum, e) => sum + e.points, 0);
     const catTotals: Record<string, number> = {};
-    (allEntries ?? []).forEach((e: any) => {
+    allEntries.forEach(e => {
       const tag = (e.point_categories as any)?.category_tag;
       if (tag) catTotals[tag] = (catTotals[tag] || 0) + e.points;
     });
+
+    const nowWeekKey = mondayOf(new Date()).toISOString().slice(0, 10);
+    const nowMonthKey = monthKeyOf(new Date().toISOString());
+    const weekTotals: Record<string, number> = {};
+    allEntries.forEach(e => { const k = weekKeyOf(e.created_at); weekTotals[k] = (weekTotals[k] || 0) + e.points; });
+
+    let streak = 0;
+    const cursor = mondayOf(new Date());
+    while ((weekTotals[cursor.toISOString().slice(0, 10)] || 0) >= 20) {
+      streak++;
+      cursor.setDate(cursor.getDate() - 7);
+    }
+
+    const thisWeekWithoutRequestCount = allEntries.filter(e => weekKeyOf(e.created_at) === nowWeekKey && e.without_request).length;
+    const thisWeekTags = new Set(allEntries.filter(e => weekKeyOf(e.created_at) === nowWeekKey).map(e => (e.point_categories as any)?.category_tag).filter(Boolean));
+    const dishwasherCount = allEntries.filter(e => (e.point_categories as any)?.name === 'Geschirrspüler aus-/einräumen').length;
+    const hasAnniversaryEntry = allEntries.some(e => (e.point_categories as any)?.name === 'Jahrestag / Geburtstag perfekt gemeistert');
+    const tier4ThisMonthCount = allEntries.filter(e => monthKeyOf(e.created_at) === nowMonthKey && (e.point_categories as any)?.tier === 4).length;
+    const customCategoryCount = allEntries.filter(e => (e.point_categories as any)?.is_global === false).length;
+
+    // Comeback: aktuelle Woche >= 30 Punkte, davor 3+ Wochen in Folge Pause (0 Punkte),
+    // und mindestens ein Eintrag vor der Pause (sonst waere es kein "Comeback").
+    let isComeback = false;
+    const thisWeekTotal = weekTotals[nowWeekKey] || 0;
+    if (thisWeekTotal >= 30) {
+      let pauseWeeks = 0;
+      const pc = mondayOf(new Date());
+      pc.setDate(pc.getDate() - 7);
+      while ((weekTotals[pc.toISOString().slice(0, 10)] || 0) === 0) {
+        pauseWeeks++;
+        pc.setDate(pc.getDate() - 7);
+        if (pauseWeeks > 52) break;
+      }
+      const hadEarlierActivity = allEntries.some(e => new Date(e.created_at) < pc);
+      isComeback = pauseWeeks >= 3 && hadEarlierActivity;
+    }
+
     const newBadgeNames: string[] = [];
     for (const badge of (allBadges ?? []) as any[]) {
-      if (earnedIds.has(badge.id)) continue;
       let earned = false;
-      if (badge.trigger_type === 'total_points' && totalPoints >= badge.trigger_value) earned = true;
-      if (badge.trigger_type === 'week_points' && weekPoints >= badge.trigger_value) earned = true;
-      if (badge.trigger_type === 'month_points' && monthPoints >= badge.trigger_value) earned = true;
-      if (badge.trigger_type === 'category_points' && badge.category_filter && (catTotals[badge.category_filter] || 0) >= badge.trigger_value) earned = true;
-      if (earned) {
-        await supabase.from('partner_badges').insert({ partner_id: partnerId, badge_id: badge.id, group_id: groupId });
-        newBadgeNames.push(`${badge.icon} ${badge.name}`);
+      let periodKey: string | null = null;
+
+      switch (badge.trigger_type) {
+        case 'total_points':
+          earned = totalPoints >= badge.trigger_value;
+          break;
+        case 'category_points':
+          earned = !!badge.category_filter && (catTotals[badge.category_filter] || 0) >= badge.trigger_value;
+          break;
+        case 'streak_weeks':
+          earned = streak === badge.trigger_value;
+          periodKey = nowWeekKey;
+          break;
+        case 'comeback':
+          earned = isComeback;
+          periodKey = nowWeekKey;
+          break;
+        case 'hellseher':
+          earned = thisWeekWithoutRequestCount >= badge.trigger_value;
+          break;
+        case 'allrounder':
+          earned = thisWeekTags.size >= badge.trigger_value;
+          break;
+        case 'dishwasher_count':
+          earned = dishwasherCount >= badge.trigger_value;
+          break;
+        case 'anniversary':
+          earned = hasAnniversaryEntry;
+          break;
+        case 'tier4_month':
+          earned = tier4ThisMonthCount >= badge.trigger_value;
+          break;
+        case 'custom_category_count':
+          earned = customCategoryCount >= badge.trigger_value;
+          break;
       }
+
+      if (!earned) continue;
+      const dedupeKey = `${badge.id}:${periodKey ?? ''}`;
+      if (badge.is_repeatable ? earnedPeriodKeys.has(dedupeKey) : earnedIds.has(badge.id)) continue;
+
+      const { error: insertErr } = await supabase.from('partner_badges')
+        .insert({ partner_id: partnerId, badge_id: badge.id, group_id: groupId, period_key: periodKey });
+      if (!insertErr) newBadgeNames.push(`${badge.icon} ${badge.name}`);
     }
     if (newBadgeNames.length > 0) {
       Alert.alert('🎖️ Badge verdient!', newBadgeNames.join('\n'));

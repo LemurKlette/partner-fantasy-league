@@ -47,3 +47,17 @@ speziell die 6-Schritte-Umbau-Sequenz.
   1. um 00:05 UTC, jährlich 1.1. um 00:05 UTC) – falls die Extension im Supabase-Projekt noch
   nicht aktiviert ist, muss sie vorher unter Database → Extensions → pg_cron aktiviert werden
 - Migration: `supabase/migrations/20260804_18_season_structure.sql`
+
+## Schritt 4 – Komplettes Badge-System, 5 Typen (2026-08-05)
+- Alte 6 unstrukturierten Badges aus Migration 09 entfernt, ersetzt durch 30 Badges:
+  5 Meilensteine (Typ 1), 12 Kategorie-Spezialisten (Typ 2, 4 Kategorien × Bronze/Silber/Gold),
+  4 Konsistenz-Badges (Typ 3), 3 Saisontitel (Typ 4, bereits in Schritt 3), 6 versteckte
+  Charakter-Badges (Typ 5)
+- Scope-Entscheidung: Typ 1/2/3/5 werden partnerweit über alle Gruppen berechnet (globale
+  Erfolge), nur Typ 4 bleibt pro Gruppe – dokumentiert als Kommentar in Migration 19
+- `checkAndAwardBadges` komplett neu geschrieben: generische Auswertung aller trigger_types
+  (total_points, category_points, streak_weeks, comeback, hellseher, allrounder,
+  dishwasher_count, anniversary, tier4_month, custom_category_count)
+- Wiederholbare Badges (Typ 3) werden pro Wochen-`period_key` einzeln vergeben, damit ein
+  gebrochener und neu aufgebauter Streak erneut zählt
+- Migration: `supabase/migrations/20260804_19_full_badge_system.sql`
