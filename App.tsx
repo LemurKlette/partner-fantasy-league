@@ -1264,11 +1264,15 @@ export default function App() {
           {[
             { icon: '👥', title: 'Gruppe erstellen', text: 'Tippe auf "Gruppe erstellen" und vergib einen Namen. Du bekommst automatisch einen 6-stelligen Code — teile ihn mit deinen Freundinnen.' },
             { icon: '🔗', title: 'Freundinnen einladen', text: 'Öffne deine Gruppe und tippe oben rechts auf den Code. Der Teilen-Dialog öffnet sich automatisch — ab zu WhatsApp!' },
-            { icon: '💑', title: 'Partner anlegen', text: 'Beim ersten Start wirst du gefragt, wie dein Partner heißt. Das ist der Name, der im Ranking erscheint. (Wähle weise.)' },
-            { icon: '⭐', title: 'Punkte vergeben', text: 'Öffne deine Gruppe, tippe "Punkte vergeben" und wähle eine Kategorie. Die Punkte landen sofort im Ranking — Rache ist süß.' },
-            { icon: '📊', title: 'Ranking verstehen', text: 'Wähle "Woche", "Monat" oder "Jahr" um den Zeitraum zu wechseln. Wer oben steht, hat sich wirklich Mühe gegeben... angeblich.' },
-            { icon: '⚙️', title: 'Kategorien anpassen', text: 'Über "Kategorien anpassen" in deiner Gruppe kannst du Punktwerte für eure Gruppe ändern — denn nicht alle Männer sind gleich faul.' },
-            { icon: '✨', title: 'Eigene Kategorie', text: 'Du kannst auch eigene Kategorien erfinden. "Endlich mal spontan sein" — go for it. Alle in der Gruppe sehen und nutzen sie.' },
+            { icon: '💑', title: 'Partner anlegen & verbinden', text: 'Beim ersten Start legst du deinen Partner an und bekommst automatisch einen Code (P-XXXXXXXX). Teile ihn mit ihm — dann kann er sich mit eigenem Login verbinden und seine Badges sehen.' },
+            { icon: '⭐', title: 'Punkte vergeben', text: 'Wähle eine Aufgabe aus einer der vier Kategorien (Haushalt, Mental Load, Romantik, Verlässlichkeit). Jede hat einen festen Punktwert nach Aufwand: 2 / 5 / 10 / 20 / 40. Bei Haushalt & Mental Load kannst du zusätzlich "Ohne Aufforderung" aktivieren — gibt ×1,5 Punkte.' },
+            { icon: '🚦', title: 'Anti-Farming-Schutz', text: 'Dieselbe Aufgabe zählt am selben Tag beim 2. Mal nur halb, ab dem 3. Mal 0 Punkte. Außerdem gibt es ein Tageslimit von 80 Punkten pro Partner — damit nicht ein einziger guter Tag die ganze Saison entscheidet.' },
+            { icon: '📊', title: 'Ranking & Saisontitel', text: 'Wähle "Woche", "Monat" oder "Jahr". Wer zum Ende eines Zeitraums vorne liegt, bekommt automatisch den Titel "Spieler der Woche" / "Monatssieger" / "Saisonsieger" als Badge.' },
+            { icon: '↩️', title: 'Punkte-Eintrag zurücknehmen', text: 'Neben deinen eigenen Einträgen im Aktivitäts-Log siehst du ein kleines ✕ — damit kannst du versehentliche Einträge wieder löschen.' },
+            { icon: '⚙️', title: 'Kategorien anpassen', text: 'Über "Kategorien anpassen" in deiner Gruppe kannst du Punktwerte für eure Gruppe individuell überschreiben — denn nicht alle Männer sind gleich faul.' },
+            { icon: '✨', title: 'Eigene Kategorie', text: 'Erfinde eigene Aufgaben und wähle dafür eine der fünf Aufwandsstufen (2/5/10/20/40 Punkte) — kein freies Zahlenfeld mehr, damit die Werte fair und vergleichbar bleiben.' },
+            { icon: '🎖️', title: 'Badges deines Partners ansehen', text: 'Tippe in "Meine Gruppen" auf seinen Namen — du siehst dieselbe Badge-Übersicht wie er selbst: Meilensteine, Kategorie-Spezialisten, Konsistenz-Serien, Saisontitel und versteckte Erfolge.' },
+            { icon: '🗑️', title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link.' },
           ].map(item => (
             <View key={item.title} style={s.card}>
               <Text style={[s.cardTitle, { marginBottom: 4 }]}>{item.icon}  {item.title}</Text>
@@ -1285,30 +1289,29 @@ export default function App() {
             </Text>
           </View>
           {[
-            { icon: '🎖️', title: 'Badges verdienen', text: 'Deine Freundin vergibt Punkte für dich — und wenn du genug davon sammelst, bekommst du Badges. Fang einfach an, Geschirrspüler einzuräumen.' },
-            { icon: '🏠', title: 'Haushalt-Hero', text: '100 Punkte in Haushalt-Kategorien. Klingt nach viel. Ist es auch. Aber du schaffst das.' },
-            { icon: '💕', title: 'Romantik-Champion', text: 'Bereits 50 Punkte in Romantik reichen. Blumen kaufen, Nachricht schreiben, Date planen — du weißt was zu tun ist.' },
-            { icon: '👑', title: 'Legende', text: '200 Gesamtpunkte. Eine Legende entsteht nicht über Nacht. Aber vielleicht übers Wochenende.' },
+            { icon: '🔑', title: 'Anmelden & Code eingeben', text: 'Registrier dich mit E-Mail & Passwort, dann gib den Code ein, den dir deine Partnerin geschickt hat (P-XXXXXXXX). Du kannst mehrere Codes verbinden, falls mehr als eine Frau dich bewertet.' },
+            { icon: '🎖️', title: 'Deine Badge-Übersicht', text: 'Nach dem Verbinden siehst du direkt alle Badges: verdiente sind farbig, offene nur mit ausgegrautem Symbol — mit Fortschrittsbalken bei Meilensteinen und Kategorie-Spezialisten.' },
+            { icon: '🔥', title: 'Konsistenz zahlt sich aus', text: '"Die Serie", "Marathonmann" und "Ironman" belohnen mehrere Wochen in Folge mit mindestens 20 Punkten — Regelmäßigkeit schlägt Strohfeuer.' },
+            { icon: '🏆', title: 'Saisontitel', text: '"Spieler der Woche", "Monatssieger" und "Saisonsieger" werden automatisch an den Erstplatzierten jeder Gruppe vergeben.' },
+            { icon: '🔮', title: 'Geheime Badges', text: 'Es gibt sechs versteckte Erfolge, die du erst siehst, wenn du sie verdient hast. Mehr wird nicht verraten — der Überraschungsmoment ist die Belohnung.' },
           ].map(item => (
             <View key={item.title} style={s.card}>
               <Text style={[s.cardTitle, { marginBottom: 4 }]}>{item.icon}  {item.title}</Text>
               <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.text}</Text>
             </View>
           ))}
-          <View style={s.card}>
-            <Text style={{ fontSize: 14, color: '#aaa', lineHeight: 20, fontStyle: 'italic' }}>
-              Bald kannst du dich mit eigenem Login anmelden und dein Badge-Profil ansehen. Bis dahin: einfach weiter Punkte sammeln.
-            </Text>
-          </View>
         </>}
 
         {helpTab === 'faq' && <>
           {[
-            { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Er erscheint nur, wenn in dieser Gruppe Punkte für ihn vergeben wurden. Vielleicht ist er einfach noch nicht gut genug? 😅' },
-            { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Noch nicht — das Feature kommt bald. Bis dahin: nächstes Mal genauer hinschauen.' },
-            { q: 'Sieht mein Partner die Punkte?', a: 'Aktuell nur du und deine Freundinnen in der Gruppe. Dein Partner hat noch keinen eigenen Login — aber es kommt.' },
+            { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Entweder wurden noch keine Punkte für ihn vergeben, oder er ist für diese Gruppe deaktiviert (siehe "Meine Partner in dieser Gruppe" im Gruppen-Detail).' },
+            { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Ja — im Aktivitäts-Log deiner Gruppe kannst du eigene Einträge über das kleine ✕ löschen.' },
+            { q: 'Sieht mein Partner die Punkte?', a: 'Er sieht seine Badges und seinen Fortschritt über sein eigenes Profil, aber nicht das direkte Ranking oder die Gruppen-Ansicht — die bleibt euch Frauen vorbehalten.' },
+            { q: 'Warum bekomme ich manchmal 0 Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute schon zweimal für ihn eingetragen (Anti-Farming-Schutz), oder das Tageslimit von 80 Punkten ist erreicht. Im Log steht dann "Tageslimit erreicht".' },
+            { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
+            { q: 'Kann ich eine Gruppe löschen?', a: 'Nur wenn du sie erstellt hast — dann findest du einen "Gruppe löschen"-Link auf der Gruppenkarte in "Meine Gruppen".' },
             { q: 'Wie lösche ich meinen Account?', a: 'Profil & Einstellungen → "Konto löschen". Achtung: alle Daten werden unwiderruflich gelöscht.' },
           ].map(item => (
             <View key={item.q} style={s.card}>
