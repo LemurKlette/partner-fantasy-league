@@ -28,7 +28,7 @@ type Period = 'week' | 'month' | 'year';
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
-  | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile';
+  | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help';
 
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -78,6 +78,8 @@ export default function App() {
   const [newCatPoints, setNewCatPoints] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('');
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
+  const [helpTab, setHelpTab] = useState<'frauen' | 'maenner' | 'faq'>('frauen');
+  const [helpReturnScreen, setHelpReturnScreen] = useState<Screen>('groups');
   const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
   const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
   const [period, setPeriod] = useState<Period>('week');
@@ -459,9 +461,14 @@ export default function App() {
             <Text style={s.headerTitle}>Meine Gruppen</Text>
             <Text style={s.headerSub}>{partner?.name}</Text>
           </View>
-          <TouchableOpacity onPress={() => setScreen('profile')}>
-            <Text style={{ fontSize: 13, color: '#3ECF8E' }}>Profil ›</Text>
-          </TouchableOpacity>
+          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+            <TouchableOpacity onPress={() => setScreen('profile')}>
+              <Text style={{ fontSize: 13, color: '#3ECF8E' }}>Profil ›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setHelpTab('frauen'); setHelpReturnScreen('groups'); setScreen('help'); }}>
+              <Text style={{ fontSize: 13, color: '#aaa' }}>? Hilfe</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
       {groups.length === 0
@@ -489,9 +496,14 @@ export default function App() {
         <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 4 }}>
           <Text style={s.headerTitle}>{selectedGroup?.name}</Text>
-          <TouchableOpacity onPress={() => Share.share({ message: `Tritt unserer Gruppe "${selectedGroup?.name}" bei! Code: ${selectedGroup?.invite_code}` })} style={s.codeBtn}>
-            <Text style={s.codeBtnText}>{selectedGroup?.invite_code} 🔗</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={() => { setHelpTab('frauen'); setHelpReturnScreen('group-detail'); setScreen('help'); }}>
+              <Text style={{ fontSize: 13, color: '#aaa' }}>?</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => Share.share({ message: `Tritt unserer Gruppe "${selectedGroup?.name}" bei! Code: ${selectedGroup?.invite_code}` })} style={s.codeBtn}>
+              <Text style={s.codeBtnText}>{selectedGroup?.invite_code} 🔗</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -710,6 +722,84 @@ export default function App() {
           </TouchableOpacity>
         )}
       </View>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'help') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => setScreen(helpReturnScreen)}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <Text style={s.headerTitle}>Hilfe & Anleitung</Text>
+      </View>
+      <View style={s.tabs}>
+        {(['frauen', 'maenner', 'faq'] as const).map(tab => (
+          <TouchableOpacity key={tab} style={[s.tab, helpTab === tab && s.tabActive]} onPress={() => setHelpTab(tab)}>
+            <Text style={[s.tabText, helpTab === tab && s.tabTextActive]}>
+              {tab === 'frauen' ? 'Für Frauen' : tab === 'maenner' ? 'Für Männer' : 'FAQ'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
+        {helpTab === 'frauen' && <>
+          {[
+            { icon: '👥', title: 'Gruppe erstellen', text: 'Tippe auf "Gruppe erstellen" und vergib einen Namen. Du bekommst automatisch einen 6-stelligen Code — teile ihn mit deinen Freundinnen.' },
+            { icon: '🔗', title: 'Freundinnen einladen', text: 'Öffne deine Gruppe und tippe oben rechts auf den Code. Der Teilen-Dialog öffnet sich automatisch — ab zu WhatsApp!' },
+            { icon: '💑', title: 'Partner anlegen', text: 'Beim ersten Start wirst du gefragt, wie dein Partner heißt. Das ist der Name, der im Ranking erscheint. (Wähle weise.)' },
+            { icon: '⭐', title: 'Punkte vergeben', text: 'Öffne deine Gruppe, tippe "Punkte vergeben" und wähle eine Kategorie. Die Punkte landen sofort im Ranking — Rache ist süß.' },
+            { icon: '📊', title: 'Ranking verstehen', text: 'Wähle "Woche", "Monat" oder "Jahr" um den Zeitraum zu wechseln. Wer oben steht, hat sich wirklich Mühe gegeben... angeblich.' },
+            { icon: '⚙️', title: 'Kategorien anpassen', text: 'Über "Kategorien anpassen" in deiner Gruppe kannst du Punktwerte für eure Gruppe ändern — denn nicht alle Männer sind gleich faul.' },
+            { icon: '✨', title: 'Eigene Kategorie', text: 'Du kannst auch eigene Kategorien erfinden. "Endlich mal spontan sein" — go for it. Alle in der Gruppe sehen und nutzen sie.' },
+          ].map(item => (
+            <View key={item.title} style={s.card}>
+              <Text style={[s.cardTitle, { marginBottom: 4 }]}>{item.icon}  {item.title}</Text>
+              <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.text}</Text>
+            </View>
+          ))}
+        </>}
+
+        {helpTab === 'maenner' && <>
+          <View style={[s.card, { backgroundColor: '#f0fdf9' }]}>
+            <Text style={[s.cardTitle, { marginBottom: 6 }]}>👀 Hallo, du.</Text>
+            <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>
+              Das hier richtet sich eigentlich an deine Freundin. Aber schön, dass du reinschaust — das allein könnte schon Punkte geben.
+            </Text>
+          </View>
+          {[
+            { icon: '🎖️', title: 'Badges verdienen', text: 'Deine Freundin vergibt Punkte für dich — und wenn du genug davon sammelst, bekommst du Badges. Fang einfach an, Geschirrspüler einzuräumen.' },
+            { icon: '🏠', title: 'Haushalt-Hero', text: '100 Punkte in Haushalt-Kategorien. Klingt nach viel. Ist es auch. Aber du schaffst das.' },
+            { icon: '💕', title: 'Romantik-Champion', text: 'Bereits 50 Punkte in Romantik reichen. Blumen kaufen, Nachricht schreiben, Date planen — du weißt was zu tun ist.' },
+            { icon: '👑', title: 'Legende', text: '200 Gesamtpunkte. Eine Legende entsteht nicht über Nacht. Aber vielleicht übers Wochenende.' },
+          ].map(item => (
+            <View key={item.title} style={s.card}>
+              <Text style={[s.cardTitle, { marginBottom: 4 }]}>{item.icon}  {item.title}</Text>
+              <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.text}</Text>
+            </View>
+          ))}
+          <View style={s.card}>
+            <Text style={{ fontSize: 14, color: '#aaa', lineHeight: 20, fontStyle: 'italic' }}>
+              Bald kannst du dich mit eigenem Login anmelden und dein Badge-Profil ansehen. Bis dahin: einfach weiter Punkte sammeln.
+            </Text>
+          </View>
+        </>}
+
+        {helpTab === 'faq' && <>
+          {[
+            { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Er erscheint nur, wenn in dieser Gruppe Punkte für ihn vergeben wurden. Vielleicht ist er einfach noch nicht gut genug? 😅' },
+            { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Noch nicht — das Feature kommt bald. Bis dahin: nächstes Mal genauer hinschauen.' },
+            { q: 'Sieht mein Partner die Punkte?', a: 'Aktuell nur du und deine Freundinnen in der Gruppe. Dein Partner hat noch keinen eigenen Login — aber es kommt.' },
+            { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
+            { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
+            { q: 'Wie lösche ich meinen Account?', a: 'Profil & Einstellungen → "Konto löschen". Achtung: alle Daten werden unwiderruflich gelöscht.' },
+          ].map(item => (
+            <View key={item.q} style={s.card}>
+              <Text style={[s.cardTitle, { fontSize: 14, marginBottom: 6 }]}>❓  {item.q}</Text>
+              <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.a}</Text>
+            </View>
+          ))}
+        </>}
+      </ScrollView>
       <StatusBar style="auto" />
     </View>
   );
