@@ -17,7 +17,7 @@ import type { Session } from '@supabase/supabase-js';
 type Partner = { id: string; name: string };
 type Group = { id: string; name: string; invite_code: string };
 type GroupMember = { user_id: string; partner: Partner | null };
-type Category = { id: string; name: string; points: number; icon: string; is_global: boolean };
+type Category = { id: string; name: string; points: number; icon: string; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
 type RankingEntry = { partner_id: string; name: string; total: number };
 type EarnedBadge = { partner_id: string; icon: string; name: string };
 type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string } };
@@ -33,6 +33,14 @@ type Screen =
   | 'groups' | 'create-group' | 'join-group'
   | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help'
   | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile';
+
+const TIERS: { tier: number; points: number; label: string }[] = [
+  { tier: 1, points: 2, label: 'Tier 1 · 2 Pkt' },
+  { tier: 2, points: 5, label: 'Tier 2 · 5 Pkt' },
+  { tier: 3, points: 10, label: 'Tier 3 · 10 Pkt' },
+  { tier: 4, points: 20, label: 'Tier 4 · 20 Pkt' },
+  { tier: 5, points: 40, label: 'Tier 5 · 40 Pkt' },
+];
 
 function generatePartnerCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -84,8 +92,9 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [note, setNote] = useState('');
   const [newCatName, setNewCatName] = useState('');
-  const [newCatPoints, setNewCatPoints] = useState('');
+  const [newCatTier, setNewCatTier] = useState<number | null>(null);
   const [newCatIcon, setNewCatIcon] = useState('');
+  const [withoutRequest, setWithoutRequest] = useState(false);
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [helpTab, setHelpTab] = useState<'frauen' | 'maenner' | 'faq'>('frauen');
   const [helpReturnScreen, setHelpReturnScreen] = useState<Screen>('groups');
@@ -326,7 +335,7 @@ export default function App() {
   async function loadCategories() {
     const [{ data: cats }, { data: overrides }] = await Promise.all([
       supabase.from('point_categories')
-        .select('id, name, points, icon, is_global')
+        .select('id, name, points, icon, is_global, tier, multiplier_eligible, category_tag')
         .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
         .order('name'),
       supabase.from('group_category_overrides')
@@ -344,8 +353,8 @@ export default function App() {
   async function loadManageCategories() {
     setLoading(true);
     const [{ data: globalCats }, { data: customCats }, { data: overrides }] = await Promise.all([
-      supabase.from('point_categories').select('id, name, points, icon, is_global').eq('is_global', true).order('name'),
-      supabase.from('point_categories').select('id, name, points, icon, is_global').eq('group_id', selectedGroup!.id).order('name'),
+      supabase.from('point_categories').select('id, name, points, icon, is_global, tier, multiplier_eligible, category_tag').eq('is_global', true).order('name'),
+      supabase.from('point_categories').select('id, name, points, icon, is_global, tier, multiplier_eligible, category_tag').eq('group_id', selectedGroup!.id).order('name'),
       supabase.from('group_category_overrides').select('category_id, points').eq('group_id', selectedGroup!.id),
     ]);
     const overrideMap: Record<string, string> = {};
@@ -401,13 +410,14 @@ export default function App() {
   }
 
   async function handleCreateCategory() {
-    const pts = parseInt(newCatPoints, 10);
     if (!newCatName.trim()) { Alert.alert('Fehler', 'Bitte gib einen Namen ein.'); return; }
-    if (isNaN(pts) || pts <= 0) { Alert.alert('Fehler', 'Bitte gib eine gültige Punktzahl ein.'); return; }
+    if (!newCatTier) { Alert.alert('Fehler', 'Bitte wähle eine Aufwandsstufe.'); return; }
+    const pts = TIERS.find(t => t.tier === newCatTier)!.points;
     setLoading(true);
     const { error } = await supabase.from('point_categories').insert({
       name: newCatName.trim(),
       points: pts,
+      tier: newCatTier,
       icon: newCatIcon.trim() || '⭐',
       is_global: false,
       created_by: session!.user.id,
@@ -415,7 +425,7 @@ export default function App() {
     });
     if (error) Alert.alert('Fehler', error.message);
     else {
-      setNewCatName(''); setNewCatPoints(''); setNewCatIcon('');
+      setNewCatName(''); setNewCatTier(null); setNewCatIcon('');
       await loadCategories();
       setScreen('add-points');
     }
@@ -489,19 +499,23 @@ export default function App() {
     if (!selectedCategory) { Alert.alert('Fehler', 'Bitte wähle eine Kategorie.'); return; }
     const effectivePartnerId = selectedPartnerIdForPoints ?? partner!.id;
     const effectivePartnerName = myAllPartners.find(p => p.id === effectivePartnerId)?.name ?? partner?.name ?? '';
+    const applyMultiplier = withoutRequest && selectedCategory.multiplier_eligible;
+    const finalPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
     setLoading(true);
     const { error } = await supabase.from('point_entries').insert({
       partner_id: effectivePartnerId, group_id: selectedGroup!.id,
-      category_id: selectedCategory.id, points: selectedCategory.points,
+      category_id: selectedCategory.id, points: finalPoints,
+      without_request: applyMultiplier,
       note: note.trim() || null, created_by: session!.user.id,
     });
     if (error) Alert.alert('Fehler', error.message);
     else {
       setSelectedCategory(null);
       setNote('');
+      setWithoutRequest(false);
       await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
       await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
-      Alert.alert('Gespeichert!', `${selectedCategory.points} Punkte fuer ${effectivePartnerName} vergeben.`);
+      Alert.alert('Gespeichert!', `${finalPoints} Punkte fuer ${effectivePartnerName} vergeben.`);
       setScreen('group-detail');
     }
     setLoading(false);
@@ -915,7 +929,7 @@ export default function App() {
           <>
             <Text style={s.sectionLabel}>Eigene Kategorien</Text>
             {categories.filter(c => !c.is_global).map(cat => (
-              <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => setSelectedCategory(cat)}>
+              <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
                   <Text style={s.pts}>+{cat.points}</Text>
@@ -927,13 +941,29 @@ export default function App() {
         )}
         {!categories.some(c => !c.is_global) && <Text style={s.sectionLabel}>Kategorie wählen</Text>}
         {categories.filter(c => c.is_global).map(cat => (
-          <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => setSelectedCategory(cat)}>
+          <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
               <Text style={s.pts}>+{cat.points}</Text>
             </View>
           </TouchableOpacity>
         ))}
+        {selectedCategory?.multiplier_eligible && (
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              backgroundColor: withoutRequest ? '#f0fdf9' : '#fff', borderWidth: 1,
+              borderColor: withoutRequest ? '#3ECF8E' : '#ddd', borderRadius: 10, padding: 14, marginTop: 8 }}
+            onPress={() => setWithoutRequest(!withoutRequest)}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={s.cardTitle}>Ohne Aufforderung 🔮</Text>
+              <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>×1,5 Punkte, wenn er von selbst dran gedacht hat</Text>
+            </View>
+            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: withoutRequest ? '#3ECF8E' : '#ddd', padding: 3, justifyContent: 'center' }}>
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', marginLeft: withoutRequest ? 18 : 0 }} />
+            </View>
+          </TouchableOpacity>
+        )}
+
         <Text style={[s.sectionLabel, { marginTop: 12 }]}>Notiz (optional)</Text>
         <TextInput style={[s.input, { height: 80, textAlignVertical: 'top' }]}
           placeholder="Was hat er besonders gut gemacht?"
@@ -942,7 +972,11 @@ export default function App() {
       <View style={s.footer}>
         {loading ? <ActivityIndicator /> : (
           <TouchableOpacity style={[s.btn, !selectedCategory && s.btnDisabled]} onPress={handleSavePoints} disabled={!selectedCategory}>
-            <Text style={s.btnText}>{selectedCategory ? `${selectedCategory.points} Punkte speichern` : 'Kategorie wählen'}</Text>
+            <Text style={s.btnText}>
+              {selectedCategory
+                ? `${withoutRequest && selectedCategory.multiplier_eligible ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points} Punkte speichern`
+                : 'Kategorie wählen'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -1014,10 +1048,23 @@ export default function App() {
         <TextInput style={s.input} placeholder="z.B. Abendspaziergang organisiert"
           value={newCatName} onChangeText={setNewCatName} />
 
-        <Text style={s.sectionLabel}>Punkte</Text>
-        <TextInput style={s.input} placeholder="z.B. 10"
-          value={newCatPoints} onChangeText={setNewCatPoints}
-          keyboardType="numeric" />
+        <Text style={s.sectionLabel}>Aufwandsstufe</Text>
+        <View style={{ gap: 8 }}>
+          {TIERS.map(t => (
+            <TouchableOpacity key={t.tier}
+              style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                borderWidth: 1, borderRadius: 8, padding: 12,
+                borderColor: newCatTier === t.tier ? '#3ECF8E' : '#ddd',
+                backgroundColor: newCatTier === t.tier ? '#f0fdf9' : '#fff' }}
+              onPress={() => setNewCatTier(t.tier)}>
+              <Text style={{ fontSize: 15, fontWeight: newCatTier === t.tier ? '700' : '500' }}>{t.label}</Text>
+              {newCatTier === t.tier && <Text style={{ color: '#3ECF8E', fontWeight: 'bold' }}>✓</Text>}
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={{ fontSize: 12, color: '#aaa' }}>
+          Tier 5 (40 Punkte) ist die maximale Aufwandsstufe für eigene Kategorien.
+        </Text>
 
         <Text style={s.sectionLabel}>Emoji-Icon</Text>
         <TextInput style={[s.input, { fontSize: 24, textAlign: 'center' }]}
