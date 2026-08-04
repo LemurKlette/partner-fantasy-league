@@ -27,7 +27,7 @@ type Period = 'week' | 'month' | 'year';
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
-  | 'group-detail' | 'add-points' | 'create-category' | 'profile';
+  | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile';
 
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -76,6 +76,8 @@ export default function App() {
   const [newCatName, setNewCatName] = useState('');
   const [newCatPoints, setNewCatPoints] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('');
+  const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
+  const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
   const [period, setPeriod] = useState<Period>('week');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -147,11 +149,66 @@ export default function App() {
   }
 
   async function loadCategories() {
-    const { data } = await supabase.from('point_categories')
-      .select('id, name, points, icon, is_global')
-      .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
-      .order('name');
-    setCategories((data ?? []) as Category[]);
+    const [{ data: cats }, { data: overrides }] = await Promise.all([
+      supabase.from('point_categories')
+        .select('id, name, points, icon, is_global')
+        .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
+        .order('name'),
+      supabase.from('group_category_overrides')
+        .select('category_id, points')
+        .eq('group_id', selectedGroup!.id),
+    ]);
+    const overrideMap: Record<string, number> = {};
+    (overrides ?? []).forEach((o: any) => { overrideMap[o.category_id] = o.points; });
+    setCategories(((cats ?? []) as Category[]).map(c => ({
+      ...c,
+      points: overrideMap[c.id] ?? c.points,
+    })));
+  }
+
+  async function loadManageCategories() {
+    setLoading(true);
+    const [{ data: globalCats }, { data: customCats }, { data: overrides }] = await Promise.all([
+      supabase.from('point_categories').select('id, name, points, icon, is_global').eq('is_global', true).order('name'),
+      supabase.from('point_categories').select('id, name, points, icon, is_global').eq('group_id', selectedGroup!.id).order('name'),
+      supabase.from('group_category_overrides').select('category_id, points').eq('group_id', selectedGroup!.id),
+    ]);
+    const overrideMap: Record<string, string> = {};
+    (overrides ?? []).forEach((o: any) => { overrideMap[o.category_id] = String(o.points); });
+    (globalCats ?? []).forEach((c: any) => { if (!overrideMap[c.id]) overrideMap[c.id] = String(c.points); });
+    setCategories((globalCats ?? []) as Category[]);
+    setGroupCustomCats((customCats ?? []) as Category[]);
+    setOverrideInputs(overrideMap);
+    setLoading(false);
+    setScreen('manage-categories');
+  }
+
+  async function handleSaveOverrides() {
+    setLoading(true);
+    const rows = categories.map(c => ({
+      group_id: selectedGroup!.id,
+      category_id: c.id,
+      points: parseInt(overrideInputs[c.id] ?? String(c.points), 10) || c.points,
+    }));
+    const { error } = await supabase.from('group_category_overrides')
+      .upsert(rows, { onConflict: 'group_id,category_id' });
+    if (error) Alert.alert('Fehler', error.message);
+    else {
+      Alert.alert('Gespeichert!', 'Punktwerte für diese Gruppe wurden angepasst.');
+      setScreen('group-detail');
+    }
+    setLoading(false);
+  }
+
+  async function handleDeleteCustomCategory(catId: string, catName: string) {
+    Alert.alert('Kategorie löschen', `"${catName}" wirklich löschen? Vergangene Einträge bleiben erhalten.`, [
+      { text: 'Abbrechen', style: 'cancel' },
+      { text: 'Löschen', style: 'destructive', onPress: async () => {
+        const { error } = await supabase.from('point_categories').delete().eq('id', catId);
+        if (error) Alert.alert('Fehler', error.message);
+        else setGroupCustomCats(prev => prev.filter(c => c.id !== catId));
+      }},
+    ]);
   }
 
   async function handleCreateCategory() {
@@ -399,6 +456,12 @@ export default function App() {
         ))}
       </View>
 
+      <TouchableOpacity
+        style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'flex-end' }}
+        onPress={loadManageCategories}>
+        <Text style={{ fontSize: 12, color: '#3ECF8E' }}>⚙️ Kategorien anpassen</Text>
+      </TouchableOpacity>
+
       {loading
         ? <View style={s.center}><ActivityIndicator color="#3ECF8E" /></View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 130 }}>
@@ -498,6 +561,58 @@ export default function App() {
         {loading ? <ActivityIndicator /> : (
           <TouchableOpacity style={[s.btn, !selectedCategory && s.btnDisabled]} onPress={handleSavePoints} disabled={!selectedCategory}>
             <Text style={s.btnText}>{selectedCategory ? `${selectedCategory.points} Punkte speichern` : 'Kategorie wählen'}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      <StatusBar style="auto" />
+    </View>
+  );
+
+  if (screen === 'manage-categories') return (
+    <View style={s.screen}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => setScreen('group-detail')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <Text style={s.headerTitle}>Kategorien verwalten</Text>
+        <Text style={s.headerSub}>{selectedGroup?.name}</Text>
+      </View>
+      {loading
+        ? <View style={s.center}><ActivityIndicator color="#3ECF8E" /></View>
+        : <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 130 }}>
+            <Text style={s.sectionLabel}>Standard-Kategorien · Punkte anpassen</Text>
+            {categories.map(cat => (
+              <View key={cat.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <Text style={{ fontSize: 18 }}>{cat.icon}</Text>
+                <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
+                <Text style={{ fontSize: 11, color: '#bbb' }}>Std:{cat.points}</Text>
+                <TextInput
+                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 6, padding: 6, width: 54, textAlign: 'center', fontSize: 15, backgroundColor: '#fff' }}
+                  value={overrideInputs[cat.id] ?? String(cat.points)}
+                  onChangeText={v => setOverrideInputs(prev => ({ ...prev, [cat.id]: v }))}
+                  keyboardType="numeric"
+                />
+              </View>
+            ))}
+
+            {groupCustomCats.length > 0 && <>
+              <Text style={[s.sectionLabel, { marginTop: 8 }]}>Eigene Kategorien · Löschen</Text>
+              {groupCustomCats.map(cat => (
+                <View key={cat.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                  <Text style={{ fontSize: 18 }}>{cat.icon}</Text>
+                  <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
+                  <Text style={s.pts}>{cat.points} Pkt</Text>
+                  <TouchableOpacity onPress={() => handleDeleteCustomCategory(cat.id, cat.name)}
+                    style={{ backgroundColor: '#fff0f0', borderRadius: 6, padding: 8 }}>
+                    <Text style={{ color: '#ff4444', fontSize: 13, fontWeight: '600' }}>Löschen</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </>}
+          </ScrollView>
+      }
+      <View style={s.footer}>
+        {loading ? <ActivityIndicator /> : (
+          <TouchableOpacity style={s.btn} onPress={handleSaveOverrides}>
+            <Text style={s.btnText}>Änderungen speichern</Text>
           </TouchableOpacity>
         )}
       </View>
