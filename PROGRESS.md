@@ -151,3 +151,16 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Zusätzlich `CATEGORY_TAG_TO_KEY` als Brücke zwischen den `category_tag`-Werten aus der
   Datenbank (`haushalt`, `mental_load`, …) und den Theme-Schlüsseln
 - Regel ab jetzt: außerhalb von `theme/colors.ts` steht nirgendwo ein Hex-Wert
+
+## Schritt 2 – theme/icons.ts (2026-08-06)
+- `theme/icons.ts` mit 80 semantischen Icon-Schlüsseln angelegt (Kategorien, Aufgaben,
+  Navigation/UI, Badges aller 5 Typen), ausschließlich MaterialCommunityIcons
+- Alle 80 Namen automatisiert gegen den echten Glyphmap-Bestand (7448 Icons) in
+  `@expo/vector-icons` validiert
+- **2 Abweichungen nötig** (Wunschname existiert nicht, Ersatz aus derselben Familie):
+  - `badgeHousehold3`: `home-star` → **`home-variant-outline`** (die Stufe wird ohnehin über
+    die Rahmenform ausgedrückt, nicht über das Icon)
+  - `badgeRomance1`: `message-heart-outline` → **`email-heart-outline`** (nächster Treffer
+    mit Nachricht+Herz)
+- Zusätzlich: `ICON_SIZE` (inline 20 / list 24 / category 28 / badge 32) und Helfer
+  `iconFor(key)`, der einen in der DB gespeicherten `icon_key` auflöst
