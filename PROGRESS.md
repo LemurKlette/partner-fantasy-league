@@ -137,3 +137,17 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Reduziert Dateigröße von potenziell mehreren MB (modernes Handyfoto) auf grob 20–50 KB pro
   Avatar — schont Supabase-Storage- und vor allem Egress-Kontingent im Free-Tier
 - Neues Paket: `expo-image-manipulator`
+
+---
+
+# Design-System-Integration (6 Schritte)
+
+## Schritt 1 – theme/colors.ts (2026-08-06)
+- `theme/colors.ts` als einzige Farbquelle der App angelegt: `COLORS` (Flächen, Aktionen,
+  Text, Ranking, gesperrte Badges) und `CATEGORY_COLORS` (4 Kategorien je stroke/fill)
+- Haushalt bewusst Ocker (`#854F0B`), **nicht** Terrakotta — Terrakotta bleibt
+  ausschließlich Aktionsfarbe, damit dieselbe Farbe nicht gleichzeitig "hier kannst du
+  tippen" und "das ist Haushalt" bedeutet
+- Zusätzlich `CATEGORY_TAG_TO_KEY` als Brücke zwischen den `category_tag`-Werten aus der
+  Datenbank (`haushalt`, `mental_load`, …) und den Theme-Schlüsseln
+- Regel ab jetzt: außerhalb von `theme/colors.ts` steht nirgendwo ein Hex-Wert
