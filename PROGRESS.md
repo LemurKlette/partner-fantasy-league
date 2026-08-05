@@ -191,3 +191,14 @@ speziell die 6-Schritte-Umbau-Sequenz.
   Stufen-Badges
 - Versteckte Badges (`isHidden`) werden vor dem Verdienen gar nicht gerendert — auch nicht
   ausgegraut
+
+## Schritt 5 – Datenbank auf Icon-Schlüssel umgestellt (2026-08-06)
+- `badges`: neue Spalten `image_url` (nullable, für spätere Illustrationen statt Icon),
+  `tier` (smallint, nur bei Spezialisten-Badges 1–3 gesetzt, mit CHECK-Constraint),
+  `icon_key` (semantischer Schlüssel aus `theme/icons.ts`, nicht der Icon-Name selbst)
+- Alle 30 Badges auf `icon_key` + `tier` aktualisiert
+- `point_categories`: neue Spalte `icon_key`; alle 34 Standard-Aufgaben auf ihren
+  spezifischen Task-Schlüssel gemappt (z.B. "Bad geputzt" → `taskBathroom`)
+- Selbst angelegte Gruppenkategorien bekommen den Sammel-Schlüssel ihrer Kategorie bzw.
+  `actionAddPoints`, damit nirgendwo mehr ein Emoji gerendert wird
+- Migration: `supabase/migrations/20260804_24_design_system_icons.sql`
