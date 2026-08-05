@@ -164,3 +164,16 @@ speziell die 6-Schritte-Umbau-Sequenz.
     mit Nachricht+Herz)
 - Zusätzlich: `ICON_SIZE` (inline 20 / list 24 / category 28 / badge 32) und Helfer
   `iconFor(key)`, der einen in der DB gespeicherten `icon_key` auflöst
+
+## Schritt 3 – BadgeFrame-Komponente (2026-08-06)
+- `components/BadgeFrame.tsx`: Stufe wird über die **Rahmenform** ausgedrückt, nicht über
+  Farbe — 5 Zacken = Stufe 1, 7 Zacken = Stufe 2, 9 Zacken = Stufe 3, Kreis = keine Stufe
+- Als echtes SVG via `react-native-svg` gerendert (nicht als PNG), damit Farben und
+  Ausgrauung jederzeit änderbar bleiben
+- Polygone als Modul-Konstanten hinterlegt, werden nicht bei jedem Render neu berechnet
+- Gesperrte Badges: eigene Füll-/Strich-/Icon-Farbe (`disabled`/`inkMuted`/`disabledInk`)
+  **plus** Opazität 0.4 — Ausgrauung läuft bewusst nie allein über Opazität, die wirkt auf
+  verschiedenen Untergründen unterschiedlich
+- Exportiert zusätzlich `frameColors()`, damit die Badge-Komponente in Schritt 4 dieselbe
+  Farblogik für das Icon nutzt statt sie zu duplizieren
+- Neues Paket: `react-native-svg`
