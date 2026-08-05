@@ -130,3 +130,10 @@ speziell die 6-Schritte-Umbau-Sequenz.
   aktiven Partner der Gruppe
 - Neue Pakete: `expo-image-picker`, `base64-arraybuffer`
 - Migration: `supabase/migrations/20260804_23_partner_avatars.sql`
+
+## Nachtrag: Avatar-Kompression (2026-08-05)
+- Bild wird vor dem Upload mit `expo-image-manipulator` auf 300×300px verkleinert und als
+  JPEG mit Qualität 0.7 komprimiert (statt nur Picker-Kompression ohne Größenbegrenzung)
+- Reduziert Dateigröße von potenziell mehreren MB (modernes Handyfoto) auf grob 20–50 KB pro
+  Avatar — schont Supabase-Storage- und vor allem Egress-Kontingent im Free-Tier
+- Neues Paket: `expo-image-manipulator`

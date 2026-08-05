@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from './lib/supabase';
 import type { Session } from '@supabase/supabase-js';
@@ -728,14 +729,21 @@ export default function App() {
   async function handlePickAvatar(partnerId: string) {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert('Zugriff verweigert', 'Bitte erlaube den Zugriff auf deine Fotos in den Einstellungen.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.7, base64: true,
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 1,
     });
-    if (result.canceled || !result.assets[0].base64) return;
+    if (picked.canceled) return;
     setLoading(true);
+    // Auf 300x300 verkleinern + komprimieren, damit Avatare nur wenige
+    // Kilobyte statt potenziell mehrere Megabyte belegen (Storage & Egress).
+    const context = ImageManipulator.manipulate(picked.assets[0].uri);
+    context.resize({ width: 300, height: 300 });
+    const rendered = await context.renderAsync();
+    const resized = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.7, base64: true });
+    if (!resized.base64) { Alert.alert('Fehler', 'Bild konnte nicht verarbeitet werden.'); setLoading(false); return; }
     const path = `${partnerId}/${Date.now()}.jpg`;
     const { error: uploadErr } = await supabase.storage.from('avatars')
-      .upload(path, decode(result.assets[0].base64), { contentType: 'image/jpeg', upsert: true });
+      .upload(path, decode(resized.base64), { contentType: 'image/jpeg', upsert: true });
     if (uploadErr) { Alert.alert('Fehler beim Hochladen', uploadErr.message); setLoading(false); return; }
     const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
     const { error: updateErr } = await supabase.from('partners').update({ avatar_url: pub.publicUrl }).eq('id', partnerId);
