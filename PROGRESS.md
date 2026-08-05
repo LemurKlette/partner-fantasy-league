@@ -177,3 +177,17 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Exportiert zusätzlich `frameColors()`, damit die Badge-Komponente in Schritt 4 dieselbe
   Farblogik für das Icon nutzt statt sie zu duplizieren
 - Neues Paket: `react-native-svg`
+
+## Schritt 4 – Badge-Komponente (2026-08-06)
+- `components/Badge.tsx` als **einzige** Badge-Darstellung der App — kein Badge wird
+  irgendwo von Hand nachgebaut, damit Größe, Rahmenform und Ausgrauung überall gleich sind
+- Nutzt `BadgeFrame` als Rahmen und rendert darin entweder das Icon aus `theme/icons.ts`
+  **oder** ein Bild, falls `image_url` gefüllt ist (beides in derselben Komponente, damit
+  Größe/Kreisform/Ausgrauung identisch bleiben)
+- Zähler-Punkt unten rechts bei mehrfach erhaltenen Badges (Terrakotta-Hintergrund,
+  `onTerracotta`-Text, 2px Rand in der Hintergrundfarbe des Screens via
+  `surroundingColor`-Prop)
+- Badge-Name darunter, optionaler Fortschrittsbalken (`gold` auf `sandDeep`) für
+  Stufen-Badges
+- Versteckte Badges (`isHidden`) werden vor dem Verdienen gar nicht gerendert — auch nicht
+  ausgegraut
