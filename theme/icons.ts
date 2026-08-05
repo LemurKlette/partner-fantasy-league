@@ -62,8 +62,34 @@ export const ICONS = {
   actionBack: 'chevron-left',
   actionCopy: 'content-copy',
   actionLogout: 'logout',
+  actionShare: 'share-variant',
+  actionForward: 'chevron-right',
+  actionExpand: 'chevron-down',
+  actionCollapse: 'chevron-up',
+  actionCheck: 'check',
+  actionClose: 'close',
+  actionUndo: 'undo-variant',
+  actionPhoto: 'camera-outline',
   toggleUnprompted: 'lightning-bolt-outline',
   emptyState: 'inbox-outline',
+  statusSuccess: 'check-circle-outline',
+  statusWarning: 'alert-circle-outline',
+  rankFirst: 'trophy-outline',
+  inviteCode: 'ticket-confirmation-outline',
+  inviteLink: 'link-variant',
+  password: 'lock-outline',
+  email: 'email-outline',
+
+  // ── Onboarding & Hilfe ──────────────────────────────
+  onboardingWelcome: 'hand-wave-outline',
+  onboardingWoman: 'human-female',
+  onboardingCelebrate: 'party-popper',
+  helpPartner: 'account-heart-outline',
+  helpAntiFarming: 'traffic-light-outline',
+  helpRanking: 'podium',
+  helpCustomCategory: 'star-plus-outline',
+  helpLogin: 'key-outline',
+  helpPeek: 'eye-outline',
 
   // ── Badges: Meilensteine ────────────────────────────
   badgeRookie: 'seed-outline',
@@ -112,6 +138,23 @@ export const ICONS = {
 } as const;
 
 export type IconKey = keyof typeof ICONS;
+
+// Auswahl beim Anlegen einer eigenen Kategorie. Ersetzt das frühere
+// Emoji-Freitextfeld — gespeichert wird der Schlüssel, nicht das Zeichen.
+export const CUSTOM_CATEGORY_ICON_CHOICES: IconKey[] = [
+  'categoryHousehold',
+  'categoryMentalLoad',
+  'categoryRomance',
+  'categoryReliability',
+  'helpCustomCategory',
+  'taskGroceries',
+  'taskCookDaily',
+  'taskGiftForOthers',
+  'taskDateNight',
+  'taskFlowers',
+  'taskPunctual',
+  'taskChildcare',
+];
 
 // Einheitliche Icon-Groessen
 export const ICON_SIZE = {

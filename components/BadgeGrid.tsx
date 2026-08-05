@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../lib/supabase';
+import Badge from './Badge';
+import type { BadgeTier } from './BadgeFrame';
+import { CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from '../theme/colors';
 
 type BadgeRow = {
   id: string;
   name: string;
-  icon: string;
+  icon_key: string | null;
+  image_url: string | null;
   badge_type: number;
+  tier: number | null;
   trigger_type: string;
   trigger_value: number | null;
   category_filter: string | null;
@@ -23,7 +28,13 @@ const TYPE_LABELS: Record<number, string> = {
   5: 'Geheime Erfolge',
 };
 
-export default function BadgeGrid({ partnerId }: { partnerId: string }) {
+export default function BadgeGrid({
+  partnerId,
+  surroundingColor = COLORS.sand,
+}: {
+  partnerId: string;
+  surroundingColor?: string;
+}) {
   const [badges, setBadges] = useState<BadgeDisplay[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,7 +43,9 @@ export default function BadgeGrid({ partnerId }: { partnerId: string }) {
   async function load() {
     setLoading(true);
     const [{ data: allBadges }, { data: earnedRows }, { data: entries }] = await Promise.all([
-      supabase.from('badges').select('id, name, icon, badge_type, trigger_type, trigger_value, category_filter, is_hidden').order('sort_order'),
+      supabase.from('badges')
+        .select('id, name, icon_key, image_url, badge_type, tier, trigger_type, trigger_value, category_filter, is_hidden')
+        .order('sort_order'),
       supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId),
       supabase.from('point_entries').select('points, point_categories(category_tag)').eq('partner_id', partnerId),
     ]);
@@ -54,14 +67,14 @@ export default function BadgeGrid({ partnerId }: { partnerId: string }) {
         if (b.trigger_type === 'category_points' && b.category_filter) progressCurrent = catTotals[b.category_filter] || 0;
         return { ...b, earned: count > 0, count, progressCurrent };
       })
-      // Versteckte Badges (Typ 5) nur zeigen, wenn bereits verdient
+      // Versteckte Badges nur zeigen, wenn bereits verdient
       .filter(b => !b.is_hidden || b.earned);
 
     setBadges(display);
     setLoading(false);
   }
 
-  if (loading) return <ActivityIndicator color="#3ECF8E" style={{ marginVertical: 20 }} />;
+  if (loading) return <ActivityIndicator color={COLORS.terracotta} style={{ marginVertical: 20 }} />;
 
   const grouped: Record<number, BadgeDisplay[]> = {};
   badges.forEach(b => { (grouped[b.badge_type] ??= []).push(b); });
@@ -73,42 +86,40 @@ export default function BadgeGrid({ partnerId }: { partnerId: string }) {
           <Text style={s.groupLabel}>{TYPE_LABELS[type]}</Text>
           <View style={s.grid}>
             {grouped[type].map(b => (
-              <View key={b.id} style={s.tile}>
-                <View>
-                  <Text style={[s.icon, !b.earned && s.iconMuted]}>{b.icon}</Text>
-                  {b.count > 1 && (
-                    <View style={s.countBubble}><Text style={s.countText}>×{b.count}</Text></View>
-                  )}
-                </View>
-                <Text style={s.name} numberOfLines={2}>{b.name}</Text>
-                {b.progressCurrent !== null && b.trigger_value != null && (
-                  <>
-                    <View style={s.progressTrack}>
-                      <View style={[s.progressFill, { width: `${Math.min(100, (b.progressCurrent / b.trigger_value) * 100)}%` }]} />
-                    </View>
-                    <Text style={s.progressText}>{Math.min(b.progressCurrent, b.trigger_value)} / {b.trigger_value}</Text>
-                  </>
-                )}
-              </View>
+              <Badge
+                key={b.id}
+                name={b.name}
+                iconKey={b.icon_key}
+                imageUrl={b.image_url}
+                tier={(b.tier as BadgeTier) ?? null}
+                category={
+                  b.category_filter
+                    ? (CATEGORY_TAG_TO_KEY[b.category_filter] as CategoryKey) ?? null
+                    : null
+                }
+                earned={b.earned}
+                count={b.count}
+                isHidden={b.is_hidden}
+                progressCurrent={b.progressCurrent}
+                progressTarget={b.trigger_value}
+                surroundingColor={surroundingColor}
+              />
             ))}
           </View>
         </View>
       ))}
-      {badges.length === 0 && <Text style={{ color: '#aaa' }}>Noch keine Badges verfügbar.</Text>}
+      {badges.length === 0 && <Text style={{ color: COLORS.inkMuted }}>Noch keine Badges verfügbar.</Text>}
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  groupLabel: { fontSize: 12, fontWeight: '600', color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  tile: { width: '30%', backgroundColor: '#fff', borderRadius: 12, padding: 10, alignItems: 'center', gap: 4, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  icon: { fontSize: 28 },
-  iconMuted: { opacity: 0.25 },
-  name: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
-  countBubble: { position: 'absolute', right: -8, bottom: -4, backgroundColor: '#3ECF8E', borderRadius: 10, paddingHorizontal: 5, paddingVertical: 1 },
-  countText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
-  progressTrack: { width: '100%', height: 4, backgroundColor: '#eee', borderRadius: 2, marginTop: 2 },
-  progressFill: { height: 4, backgroundColor: '#3ECF8E', borderRadius: 2 },
-  progressText: { fontSize: 9, color: '#aaa' },
+  groupLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.inkMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
 });

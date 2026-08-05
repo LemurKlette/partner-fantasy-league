@@ -202,3 +202,29 @@ speziell die 6-Schritte-Umbau-Sequenz.
 - Selbst angelegte Gruppenkategorien bekommen den Sammel-Schlüssel ihrer Kategorie bzw.
   `actionAddPoints`, damit nirgendwo mehr ein Emoji gerendert wird
 - Migration: `supabase/migrations/20260804_24_design_system_icons.sql`
+
+## Schritt 6 – Alle Screens auf COLORS und ICONS umgestellt (2026-08-06)
+- **Null Hex-Werte** außerhalb von `theme/colors.ts` und **null Emojis** in der UI — beides
+  automatisiert im gesamten Projekt verifiziert
+- Zentrales StyleSheet in `App.tsx` komplett auf Tokens: Screens `sand`, Karten `surface`,
+  Header/Footer/Tabs `sandDeep`, Primärbuttons `terracotta` mit `onTerracotta`-Text
+- Ranking: Platz 1 mit Pokal-Icon in `gold`, Plätze 2+ in `inkMuted`
+- Aktivitätslog: Kategorie-Icon im farbigen Kreis der jeweiligen Kategorie (neue
+  `CategoryIcon`-Hilfskomponente, nutzt `catColors()` + `icon_key` aus der DB)
+- Aufgabenlisten: Kategorie-Überschriften mit Icon in der Kategoriefarbe, jede Aufgabe mit
+  ihrem eigenen Icon im Kreis
+- Eigene Kategorie anlegen: Emoji-Freitextfeld durch eine Auswahl von 12 Icons ersetzt
+  (`CUSTOM_CATEGORY_ICON_CHOICES`), gespeichert wird der Schlüssel
+- `Avatar.tsx`: bunte Zufallspalette entfernt, nutzt jetzt `terracottaLight` als
+  Avatar-Hintergrund gemäß Design-System
+- `BadgeGrid.tsx`: baut Kacheln nicht mehr selbst, sondern rendert ausschließlich die
+  `Badge`-Komponente
+- Umgestellte Screens: Login/Registrierung, Onboarding-Auswahl, Partner anlegen,
+  Partner-Code, Gruppe erstellen/beitreten, Meine Gruppen, Gruppen-Detail, Punkte vergeben,
+  Kategorien verwalten, Eigene Kategorie, Hilfe (3 Tabs), Code eingeben, Männerprofil,
+  Partner-Badges, Profil & Einstellungen
+- Nebenbei behoben: die zwei seit Längerem bestehenden TypeScript-Fehler (Supabase
+  typisiert 1:1-Relationen als Array) — `npx tsc --noEmit` läuft jetzt **komplett
+  fehlerfrei**, und `expo export` bündelt sauber durch
+- Neue Pakete: `react-native-svg` (Schritt 3), `@expo/vector-icons` war bereits über Expo
+  vorhanden

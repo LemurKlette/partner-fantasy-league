@@ -16,21 +16,25 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from './lib/supabase';
 import type { Session } from '@supabase/supabase-js';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BadgeGrid from './components/BadgeGrid';
 import Avatar from './components/Avatar';
+import { CATEGORY_COLORS, CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from './theme/colors';
+import { CUSTOM_CATEGORY_ICON_CHOICES, ICON_SIZE, ICONS, iconFor, type IconKey } from './theme/icons';
 
 type Partner = { id: string; name: string; avatar_url?: string | null };
 type Group = { id: string; name: string; invite_code: string; created_by: string };
 type GroupMember = { user_id: string; partner: Partner | null };
 type GroupPartnerPreview = { id: string; name: string; avatar_url: string | null };
-type Category = { id: string; name: string; points: number; icon: string; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
+type Category = { id: string; name: string; points: number; icon_key: string | null; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
 type RankingEntry = { partner_id: string; name: string; total: number };
-type EarnedBadge = { partner_id: string; icon: string; name: string };
+type EarnedBadge = { partner_id: string; icon_key: string | null; name: string; category_filter: string | null };
 type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string; avatar_url: string | null } };
 type PartnerWithCode = { id: string; name: string; invite_code: string; avatar_url: string | null };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null; created_by: string;
-  partners: { name: string }; point_categories: { name: string };
+  partners: { name: string };
+  point_categories: { name: string; icon_key: string | null; category_tag: string | null };
 };
 type Period = 'week' | 'month' | 'year';
 type GroupPartnerMembership = { partner_id: string; active: boolean };
@@ -42,11 +46,40 @@ type Screen =
 
 const CATEGORY_TAG_ORDER = ['haushalt', 'mental_load', 'romantik', 'verlaesslichkeit'];
 const CATEGORY_TAG_LABELS: Record<string, string> = {
-  haushalt: '🧹 Haushalt',
-  mental_load: '🧠 Mental Load',
-  romantik: '💐 Romantik & Aufmerksamkeit',
-  verlaesslichkeit: '🛡️ Verlässlichkeit & Partnerschaft',
+  haushalt: 'Haushalt',
+  mental_load: 'Mental Load',
+  romantik: 'Romantik & Aufmerksamkeit',
+  verlaesslichkeit: 'Verlässlichkeit & Partnerschaft',
 };
+const CATEGORY_TAG_ICONS: Record<string, string> = {
+  haushalt: ICONS.categoryHousehold,
+  mental_load: ICONS.categoryMentalLoad,
+  romantik: ICONS.categoryRomance,
+  verlaesslichkeit: ICONS.categoryReliability,
+};
+
+// Farbpaar einer Kategorie. Faellt auf Ocker zurueck, wenn eine eigene
+// Kategorie ohne category_tag angelegt wurde.
+function catColors(tag: string | null | undefined) {
+  const key = tag ? CATEGORY_TAG_TO_KEY[tag] : undefined;
+  return CATEGORY_COLORS[(key ?? 'household') as CategoryKey];
+}
+
+// Kategorie-Icon im farbigen Kreis (Aufgabenlisten, Aktivitaetslog)
+function CategoryIcon({ tag, iconKey, size = ICON_SIZE.category, circle = 40 }: {
+  tag: string | null | undefined;
+  iconKey?: string | null;
+  size?: number;
+  circle?: number;
+}) {
+  const c = catColors(tag);
+  const name = iconKey ? iconFor(iconKey) : (CATEGORY_TAG_ICONS[tag ?? ''] ?? ICONS.actionAddPoints);
+  return (
+    <View style={[s.catCircle, { width: circle, height: circle, borderRadius: circle / 2, backgroundColor: c.fill }]}>
+      <MaterialCommunityIcons name={name as any} size={size} color={c.stroke} />
+    </View>
+  );
+}
 
 const TIERS: { tier: number; points: number; label: string }[] = [
   { tier: 1, points: 2, label: 'Tier 1 · 2 Pkt' },
@@ -107,7 +140,7 @@ export default function App() {
   const [note, setNote] = useState('');
   const [newCatName, setNewCatName] = useState('');
   const [newCatTier, setNewCatTier] = useState<number | null>(null);
-  const [newCatIcon, setNewCatIcon] = useState('');
+  const [newCatIconKey, setNewCatIconKey] = useState<IconKey>('helpCustomCategory');
   const [withoutRequest, setWithoutRequest] = useState(false);
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [helpTab, setHelpTab] = useState<'frauen' | 'maenner' | 'faq'>('frauen');
@@ -161,7 +194,8 @@ export default function App() {
       .select('id, invite_code, connected_at, partners(id, name, avatar_url)')
       .eq('man_user_id', userId)
       .is('disconnected_at', null);
-    setManConnections((data ?? []) as ManConnection[]);
+    // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
+    setManConnections((data ?? []) as unknown as ManConnection[]);
     setScreen('man-profile');
   }
 
@@ -240,12 +274,13 @@ export default function App() {
 
   async function loadEarnedBadges(groupId: string) {
     const { data } = await supabase.from('partner_badges')
-      .select('partner_id, badges(icon, name)')
+      .select('partner_id, badges(icon_key, name, category_filter)')
       .eq('group_id', groupId);
     setEarnedBadges(((data ?? []) as any[]).map(r => ({
       partner_id: r.partner_id,
-      icon: (r.badges as any)?.icon ?? '🎖️',
+      icon_key: (r.badges as any)?.icon_key ?? null,
       name: (r.badges as any)?.name ?? '',
+      category_filter: (r.badges as any)?.category_filter ?? null,
     })));
   }
 
@@ -368,19 +403,20 @@ export default function App() {
 
       const { error: insertErr } = await supabase.from('partner_badges')
         .insert({ partner_id: partnerId, badge_id: badge.id, group_id: groupId, period_key: periodKey });
-      if (!insertErr) newBadgeNames.push(`${badge.icon} ${badge.name}`);
+      if (!insertErr) newBadgeNames.push(badge.name);
     }
     if (newBadgeNames.length > 0) {
-      Alert.alert('🎖️ Badge verdient!', newBadgeNames.join('\n'));
+      Alert.alert('Neues Badge verdient!', newBadgeNames.join('\n'));
       await loadEarnedBadges(groupId);
     }
   }
 
   async function loadActivityLog(groupId: string) {
     const { data } = await supabase.from('point_entries')
-      .select('id, points, created_at, note, created_by, partners(name), point_categories(name)')
+      .select('id, points, created_at, note, created_by, partners(name), point_categories(name, icon_key, category_tag)')
       .eq('group_id', groupId).order('created_at', { ascending: false }).limit(10);
-    setActivityLog((data ?? []) as ActivityEntry[]);
+    // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
+    setActivityLog((data ?? []) as unknown as ActivityEntry[]);
   }
 
   async function openGroup(group: Group) {
@@ -467,7 +503,7 @@ export default function App() {
   async function loadCategories() {
     const [{ data: cats }, { data: overrides }] = await Promise.all([
       supabase.from('point_categories')
-        .select('id, name, points, icon, is_global, tier, multiplier_eligible, category_tag')
+        .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
         .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
         .order('name'),
       supabase.from('group_category_overrides')
@@ -485,8 +521,8 @@ export default function App() {
   async function loadManageCategories() {
     setLoading(true);
     const [{ data: globalCats }, { data: customCats }, { data: overrides }] = await Promise.all([
-      supabase.from('point_categories').select('id, name, points, icon, is_global, tier, multiplier_eligible, category_tag').eq('is_global', true).order('name'),
-      supabase.from('point_categories').select('id, name, points, icon, is_global, tier, multiplier_eligible, category_tag').eq('group_id', selectedGroup!.id).order('name'),
+      supabase.from('point_categories').select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag').eq('is_global', true).order('name'),
+      supabase.from('point_categories').select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag').eq('group_id', selectedGroup!.id).order('name'),
       supabase.from('group_category_overrides').select('category_id, points').eq('group_id', selectedGroup!.id),
     ]);
     const overrideMap: Record<string, string> = {};
@@ -550,14 +586,14 @@ export default function App() {
       name: newCatName.trim(),
       points: pts,
       tier: newCatTier,
-      icon: newCatIcon.trim() || '⭐',
+      icon_key: newCatIconKey,
       is_global: false,
       created_by: session!.user.id,
       group_id: selectedGroup!.id,
     });
     if (error) Alert.alert('Fehler', error.message);
     else {
-      setNewCatName(''); setNewCatTier(null); setNewCatIcon('');
+      setNewCatName(''); setNewCatTier(null); setNewCatIconKey('helpCustomCategory');
       await loadCategories();
       setScreen('add-points');
     }
@@ -668,7 +704,7 @@ export default function App() {
       await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
       await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
       if (data?.capped_reason === 'daily_limit') {
-        Alert.alert('😉', 'Er hatte heute wohl einen sehr guten Tag – weitere Punkte zählen ab morgen.');
+        Alert.alert('Tageslimit erreicht', 'Er hatte heute wohl einen sehr guten Tag – weitere Punkte zählen ab morgen.');
       } else {
         Alert.alert('Gespeichert!', `${data?.points ?? requestedPoints} Punkte fuer ${effectivePartnerName} vergeben.`);
       }
@@ -805,7 +841,7 @@ export default function App() {
   // ── SCREENS ──────────────────────────────────────────
 
   if (screen === 'loading') return (
-    <View style={s.center}><ActivityIndicator size="large" color="#3ECF8E" /><StatusBar style="auto" /></View>
+    <View style={s.center}><ActivityIndicator size="large" color={COLORS.terracotta} /><StatusBar style="auto" /></View>
   );
 
   if (screen === 'auth') return (
@@ -827,16 +863,19 @@ export default function App() {
 
   if (screen === 'onboarding-choice') return (
     <View style={s.center}>
-      <Text style={s.title}>Willkommen! 👋</Text>
+      <MaterialCommunityIcons name={ICONS.onboardingWelcome as any} size={44} color={COLORS.terracotta} style={{ marginBottom: 12 }} />
+      <Text style={s.title}>Willkommen!</Text>
       <Text style={s.subtitle}>Wie möchtest du die App nutzen?</Text>
-      <TouchableOpacity style={[s.btn, { marginBottom: 12 }]} onPress={() => setScreen('create-partner')}>
-        <Text style={s.btnText}>Ich bin eine Frau 👩</Text>
+      <TouchableOpacity style={[s.btn, s.iconRow, { marginBottom: 12, justifyContent: 'center' }]} onPress={() => setScreen('create-partner')}>
+        <MaterialCommunityIcons name={ICONS.onboardingWoman as any} size={ICON_SIZE.inline} color={COLORS.onTerracotta} />
+        <Text style={s.btnText}>Ich bin eine Frau</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setScreen('enter-invite-code')}>
-        <Text style={s.btnOutlineText}>Ich habe einen Einladungscode 📬</Text>
+      <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={() => setScreen('enter-invite-code')}>
+        <MaterialCommunityIcons name={ICONS.inviteCode as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+        <Text style={s.btnOutlineText}>Ich habe einen Einladungscode</Text>
       </TouchableOpacity>
       <TouchableOpacity onPress={handleLogout} style={{ marginTop: 20 }}>
-        <Text style={[s.link, { color: '#aaa' }]}>Abmelden</Text>
+        <Text style={[s.link, { color: COLORS.inkMuted }]}>Abmelden</Text>
       </TouchableOpacity>
       <StatusBar style="auto" />
     </View>
@@ -856,20 +895,23 @@ export default function App() {
 
   if (screen === 'show-partner-code') return (
     <View style={s.center}>
-      <Text style={s.title}>Partner angelegt! 🎉</Text>
+      <MaterialCommunityIcons name={ICONS.onboardingCelebrate as any} size={44} color={COLORS.terracotta} style={{ marginBottom: 12 }} />
+      <Text style={s.title}>Partner angelegt!</Text>
       <Text style={s.subtitle}>Schick deinem Partner diesen Code:</Text>
-      <View style={{ backgroundColor: '#f0fdf9', borderRadius: 12, padding: 24, marginBottom: 16, alignItems: 'center', width: '100%' }}>
-        <Text style={{ fontSize: 26, fontWeight: 'bold', letterSpacing: 3, color: '#3ECF8E' }}>{generatedPartnerCode}</Text>
+      <View style={{ backgroundColor: COLORS.surface, borderRadius: 12, padding: 24, marginBottom: 16, alignItems: 'center', width: '100%' }}>
+        <Text style={{ fontSize: 26, fontWeight: 'bold', letterSpacing: 3, color: COLORS.terracotta }}>{generatedPartnerCode}</Text>
       </View>
-      <Text style={{ fontSize: 13, color: '#aaa', textAlign: 'center', marginBottom: 20 }}>
+      <Text style={{ fontSize: 13, color: COLORS.inkMuted, textAlign: 'center', marginBottom: 20 }}>
         Dein Partner gibt diesen Code beim ersten Login ein, um sich mit dir zu verbinden.
       </Text>
-      <TouchableOpacity style={[s.btn, s.btnOutline, { marginBottom: 12 }]}
+      <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { marginBottom: 12, justifyContent: 'center' }]}
         onPress={() => Share.share({ message: `Dein Einladungscode für die Partner Fantasy League: ${generatedPartnerCode}` })}>
+        <MaterialCommunityIcons name={ICONS.actionShare as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
         <Text style={s.btnOutlineText}>Code teilen</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={s.btn} onPress={() => loadGroups(session!)}>
-        <Text style={s.btnText}>Weiter zur App →</Text>
+      <TouchableOpacity style={[s.btn, s.iconRow, { justifyContent: 'center' }]} onPress={() => loadGroups(session!)}>
+        <Text style={s.btnText}>Weiter zur App</Text>
+        <MaterialCommunityIcons name={ICONS.actionForward as any} size={ICON_SIZE.inline} color={COLORS.onTerracotta} />
       </TouchableOpacity>
       <StatusBar style="auto" />
     </View>
@@ -909,23 +951,28 @@ export default function App() {
           <View>
             <Text style={s.headerTitle}>Meine Gruppen</Text>
             {partner && (
-              <TouchableOpacity onPress={() => { setViewedPartner(partner); setScreen('partner-badges'); }}>
-                <Text style={[s.headerSub, { textDecorationLine: 'underline' }]}>{partner.name} ›</Text>
+              <TouchableOpacity style={s.iconRow} onPress={() => { setViewedPartner(partner); setScreen('partner-badges'); }}>
+                <Avatar uri={partner.avatar_url} name={partner.name} size={24} />
+                <Text style={s.headerSub}>{partner.name}</Text>
+                <MaterialCommunityIcons name={ICONS.actionForward as any} size={16} color={COLORS.terracotta} />
               </TouchableOpacity>
             )}
           </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <TouchableOpacity onPress={() => { loadProfileData(); setScreen('profile'); }}>
-              <Text style={{ fontSize: 13, color: '#3ECF8E' }}>Profil ›</Text>
+              <MaterialCommunityIcons name={ICONS.navProfile as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => { setHelpTab('frauen'); setHelpReturnScreen('groups'); setScreen('help'); }}>
-              <Text style={{ fontSize: 13, color: '#aaa' }}>? Hilfe</Text>
+              <MaterialCommunityIcons name={ICONS.navHelp as any} size={ICON_SIZE.list} color={COLORS.inkMuted} />
             </TouchableOpacity>
           </View>
         </View>
       </View>
       {groups.length === 0
-        ? <View style={s.center}><Text style={s.empty}>Du bist noch in keiner Gruppe.</Text></View>
+        ? <View style={s.center}>
+            <MaterialCommunityIcons name={ICONS.emptyState as any} size={40} color={COLORS.inkMuted} style={{ marginBottom: 8 }} />
+            <Text style={s.empty}>Du bist noch in keiner Gruppe.</Text>
+          </View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
             {groups.map(item => (
               <View key={item.id} style={s.card}>
@@ -933,18 +980,22 @@ export default function App() {
                   {(groupAvatarsMap[item.id]?.length ?? 0) > 0 && (
                     <View style={{ flexDirection: 'row', marginBottom: 10 }}>
                       {groupAvatarsMap[item.id].map((p, i) => (
-                        <View key={p.id} style={{ marginLeft: i === 0 ? 0 : -12, borderWidth: 2, borderColor: '#fff', borderRadius: 18 }}>
+                        <View key={p.id} style={{ marginLeft: i === 0 ? 0 : -12, borderWidth: 2, borderColor: COLORS.surface, borderRadius: 18 }}>
                           <Avatar uri={p.avatar_url} name={p.name} size={32} />
                         </View>
                       ))}
                     </View>
                   )}
                   <Text style={s.cardTitle}>{item.name}</Text>
-                  <Text style={s.cardSub}>Code: {item.invite_code} ›</Text>
+                  <View style={[s.iconRow, { gap: 4 }]}>
+                    <Text style={s.cardSub}>Code: {item.invite_code}</Text>
+                    <MaterialCommunityIcons name={ICONS.actionForward as any} size={14} color={COLORS.inkMuted} />
+                  </View>
                 </TouchableOpacity>
                 {item.created_by === session?.user.id && (
-                  <TouchableOpacity onPress={() => handleDeleteGroup(item.id, item.name)} style={{ marginTop: 10, alignSelf: 'flex-start' }}>
-                    <Text style={{ color: '#ff4444', fontSize: 12, fontWeight: '600' }}>Gruppe löschen</Text>
+                  <TouchableOpacity onPress={() => handleDeleteGroup(item.id, item.name)} style={[s.iconRow, { marginTop: 10, alignSelf: 'flex-start', gap: 4 }]}>
+                    <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                    <Text style={{ color: COLORS.terracotta, fontSize: 12, fontWeight: '600' }}>Gruppe löschen</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -952,7 +1003,10 @@ export default function App() {
           </ScrollView>
       }
       <View style={s.footer}>
-        <TouchableOpacity style={s.btn} onPress={() => setScreen('create-group')}><Text style={s.btnText}>+ Gruppe erstellen</Text></TouchableOpacity>
+        <TouchableOpacity style={[s.btn, s.iconRow, { justifyContent: 'center' }]} onPress={() => setScreen('create-group')}>
+          <MaterialCommunityIcons name={ICONS.actionAddPoints as any} size={ICON_SIZE.inline} color={COLORS.onTerracotta} />
+          <Text style={s.btnText}>Gruppe erstellen</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setScreen('join-group')}><Text style={s.btnOutlineText}>Gruppe beitreten</Text></TouchableOpacity>
       </View>
       <StatusBar style="auto" />
@@ -962,15 +1016,19 @@ export default function App() {
   if (screen === 'group-detail') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('groups')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 4 }}>
           <Text style={s.headerTitle}>{selectedGroup?.name}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <TouchableOpacity onPress={() => { setHelpTab('frauen'); setHelpReturnScreen('group-detail'); setScreen('help'); }}>
-              <Text style={{ fontSize: 13, color: '#aaa' }}>?</Text>
+              <MaterialCommunityIcons name={ICONS.navHelp as any} size={ICON_SIZE.list} color={COLORS.inkMuted} />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => Share.share({ message: `Tritt unserer Gruppe "${selectedGroup?.name}" bei! Code: ${selectedGroup?.invite_code}` })} style={s.codeBtn}>
-              <Text style={s.codeBtnText}>{selectedGroup?.invite_code} 🔗</Text>
+              <Text style={s.codeBtnText}>{selectedGroup?.invite_code}</Text>
+              <MaterialCommunityIcons name={ICONS.actionShare as any} size={14} color={COLORS.terracotta} />
             </TouchableOpacity>
           </View>
         </View>
@@ -988,33 +1046,48 @@ export default function App() {
       </View>
 
       <TouchableOpacity
-        style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'flex-end' }}
+        style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: COLORS.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}
         onPress={loadManageCategories}>
-        <Text style={{ fontSize: 12, color: '#3ECF8E' }}>⚙️ Kategorien anpassen</Text>
+        <MaterialCommunityIcons name={ICONS.navSettings as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+        <Text style={{ fontSize: 12, color: COLORS.terracotta }}>Kategorien anpassen</Text>
       </TouchableOpacity>
 
       {loading
-        ? <View style={s.center}><ActivityIndicator color="#3ECF8E" /></View>
+        ? <View style={s.center}><ActivityIndicator color={COLORS.terracotta} /></View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 130 }}>
 
             <Text style={s.sectionLabel}>Ranking</Text>
             {rankingLoading
-              ? <ActivityIndicator color="#3ECF8E" />
+              ? <ActivityIndicator color={COLORS.terracotta} />
               : ranking.length === 0
                 ? <Text style={s.empty}>Noch keine Punkte in diesem Zeitraum.</Text>
                 : ranking.map((item, index) => {
                     const badges = earnedBadges.filter(b => b.partner_id === item.partner_id);
                     const leaderLabel = period === 'week' ? 'Spieler der Woche' : period === 'month' ? 'Monatssieger' : `Saisonsieger ${new Date().getFullYear()}`;
+                    const isLeader = index === 0 && item.total > 0;
                     return (
                       <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
-                        <Text style={{ fontSize: 20, width: 36 }}>{index === 0 ? '🏆' : `${index + 1}.`}</Text>
+                        <View style={{ width: 32, alignItems: 'center' }}>
+                          {isLeader
+                            ? <MaterialCommunityIcons name={ICONS.rankFirst as any} size={ICON_SIZE.list} color={COLORS.gold} />
+                            : <Text style={{ fontSize: 18, fontWeight: '600', color: COLORS.inkMuted }}>{index + 1}.</Text>}
+                        </View>
                         <View style={{ flex: 1 }}>
                           <Text style={s.cardTitle}>{item.name}</Text>
-                          {index === 0 && item.total > 0 && (
-                            <Text style={{ fontSize: 11, color: '#3ECF8E', fontWeight: '600', marginTop: 1 }}>{leaderLabel}</Text>
+                          {isLeader && (
+                            <Text style={{ fontSize: 11, color: COLORS.gold, fontWeight: '600', marginTop: 1 }}>{leaderLabel}</Text>
                           )}
                           {badges.length > 0 && (
-                            <Text style={{ fontSize: 14, marginTop: 2 }}>{badges.map(b => b.icon).join(' ')}</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                              {badges.map((b, bi) => (
+                                <MaterialCommunityIcons
+                                  key={`${b.name}-${bi}`}
+                                  name={iconFor(b.icon_key) as any}
+                                  size={16}
+                                  color={catColors(b.category_filter).stroke}
+                                />
+                              ))}
+                            </View>
                           )}
                         </View>
                         <Text style={s.pts}>{item.total} Pkt</Text>
@@ -1026,26 +1099,32 @@ export default function App() {
             <Text style={s.sectionLabel}>Letzte Aktivitäten</Text>
             {activityLog.length === 0
               ? <Text style={s.empty}>Noch keine Einträge in dieser Gruppe.</Text>
-              : activityLog.map(entry => (
-                <View key={entry.id} style={s.card}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>
-                      {(entry.partners as any).name} hat {(entry.point_categories as any).name} erledigt
-                    </Text>
-                    {entry.created_by === session?.user.id && (
-                      <TouchableOpacity onPress={() => handleDeletePointEntry(entry.id)} style={{ padding: 4 }}>
-                        <Text style={{ fontSize: 15, color: '#ccc' }}>✕</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-                    <Text style={[s.cardSub, { flex: 1, marginRight: 8 }]}>{entry.note ? `„${entry.note}"` : ''}</Text>
-                    <Text style={[s.pts, { fontSize: 13 }, entry.points === 0 && { color: '#bbb' }]}>
-                      {entry.points === 0 ? '0 Punkte – Tageslimit erreicht' : `+${entry.points}`} · {timeAgo(entry.created_at)}
-                    </Text>
+              : activityLog.map(entry => {
+                const cat = entry.point_categories as any;
+                return (
+                <View key={entry.id} style={[s.card, { flexDirection: 'row', gap: 12 }]}>
+                  <CategoryIcon tag={cat?.category_tag} iconKey={cat?.icon_key} size={ICON_SIZE.list} circle={36} />
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>
+                        {(entry.partners as any).name} hat {cat?.name} erledigt
+                      </Text>
+                      {entry.created_by === session?.user.id && (
+                        <TouchableOpacity onPress={() => handleDeletePointEntry(entry.id)} style={{ padding: 4 }}>
+                          <MaterialCommunityIcons name={ICONS.actionClose as any} size={ICON_SIZE.inline} color={COLORS.inkMuted} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                      <Text style={[s.cardSub, { flex: 1, marginRight: 8 }]}>{entry.note ? `„${entry.note}"` : ''}</Text>
+                      <Text style={[s.pts, { fontSize: 13 }, entry.points === 0 && { color: COLORS.inkMuted }]}>
+                        {entry.points === 0 ? '0 Punkte – Tageslimit erreicht' : `+${entry.points}`} · {timeAgo(entry.created_at)}
+                      </Text>
+                    </View>
                   </View>
                 </View>
-              ))
+                );
+              })
             }
 
             {myAllPartners.length > 0 && (
@@ -1056,18 +1135,19 @@ export default function App() {
                   const isActive = membership?.active ?? true;
                   return (
                     <View key={mp.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+                      <Avatar uri={mp.avatar_url} name={mp.name} size={36} />
                       <View style={{ flex: 1 }}>
                         <Text style={s.cardTitle}>{mp.name}</Text>
-                        <Text style={{ fontSize: 12, color: isActive ? '#3ECF8E' : '#bbb', marginTop: 2 }}>
+                        <Text style={{ fontSize: 12, color: isActive ? COLORS.terracotta : COLORS.inkMuted, marginTop: 2 }}>
                           {isActive ? 'Aktiv im Ranking' : 'Deaktiviert'}
                         </Text>
                       </View>
                       <TouchableOpacity
                         style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
-                          backgroundColor: isActive ? '#fff0f0' : '#f0fff8',
-                          borderWidth: 1, borderColor: isActive ? '#ffc0c0' : '#a0e8c8' }}
+                          backgroundColor: COLORS.sand, borderWidth: 1,
+                          borderColor: isActive ? COLORS.terracotta : COLORS.inkMuted }}
                         onPress={() => handleTogglePartnerMembership(mp.id, isActive)}>
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? '#ff4444' : '#3ECF8E' }}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? COLORS.terracotta : COLORS.inkSoft }}>
                           {isActive ? 'Deaktivieren' : 'Aktivieren'}
                         </Text>
                       </TouchableOpacity>
@@ -1080,10 +1160,13 @@ export default function App() {
             <TouchableOpacity style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
               onPress={() => setMembersExpanded(!membersExpanded)}>
               <Text style={s.sectionLabel}>Gruppenmitglieder</Text>
-              <Text style={{ color: '#aaa', fontSize: 12 }}>{membersExpanded ? '▲ einklappen' : '▼ ausklappen'}</Text>
+              <MaterialCommunityIcons
+                name={(membersExpanded ? ICONS.actionCollapse : ICONS.actionExpand) as any}
+                size={ICON_SIZE.inline} color={COLORS.inkMuted} />
             </TouchableOpacity>
             {membersExpanded && groupMembers.map(m => (
-              <View key={m.user_id} style={s.card}>
+              <View key={m.user_id} style={[s.card, s.iconRow]}>
+                <Avatar uri={m.partner?.avatar_url} name={m.partner?.name ?? '?'} size={32} />
                 <Text style={s.cardTitle}>{m.partner?.name ?? '(kein Partner)'}</Text>
               </View>
             ))}
@@ -1091,11 +1174,13 @@ export default function App() {
           </ScrollView>
       }
       <View style={s.footer}>
-        <TouchableOpacity style={s.btn} onPress={async () => { await loadCategories(); setScreen('add-points'); }}>
-          <Text style={s.btnText}>+ Punkte vergeben</Text>
+        <TouchableOpacity style={[s.btn, s.iconRow, { justifyContent: 'center' }]} onPress={async () => { await loadCategories(); setScreen('add-points'); }}>
+          <MaterialCommunityIcons name={ICONS.actionAddPoints as any} size={ICON_SIZE.inline} color={COLORS.onTerracotta} />
+          <Text style={s.btnText}>Punkte vergeben</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={async () => { await loadCategories(); setScreen('create-category'); }}>
-          <Text style={s.btnOutlineText}>+ Eigene Kategorie</Text>
+        <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={async () => { await loadCategories(); setScreen('create-category'); }}>
+          <MaterialCommunityIcons name={ICONS.helpCustomCategory as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.btnOutlineText}>Eigene Kategorie</Text>
         </TouchableOpacity>
       </View>
       <StatusBar style="auto" />
@@ -1108,41 +1193,47 @@ export default function App() {
     return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen('group-detail')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('group-detail')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Punkte vergeben</Text>
         <Text style={s.headerSub}>{selectedGroup?.name}</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
         {activePartners.length > 1 && (
           <>
-            <Text style={s.sectionLabel}>Fuer wen?</Text>
+            <Text style={s.sectionLabel}>Für wen?</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
-              {activePartners.map(ap => (
-                <TouchableOpacity key={ap.id}
-                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-                    backgroundColor: selectedPartnerIdForPoints === ap.id ? '#3ECF8E' : '#f5f5f5',
-                    borderWidth: 1, borderColor: selectedPartnerIdForPoints === ap.id ? '#3ECF8E' : '#ddd' }}
-                  onPress={() => setSelectedPartnerIdForPoints(ap.id)}>
-                  <Text style={{ color: selectedPartnerIdForPoints === ap.id ? '#fff' : '#333', fontWeight: '600', fontSize: 14 }}>
-                    {ap.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {activePartners.map(ap => {
+                const sel = selectedPartnerIdForPoints === ap.id;
+                return (
+                  <TouchableOpacity key={ap.id}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+                      backgroundColor: sel ? COLORS.terracotta : COLORS.surface,
+                      borderWidth: 1, borderColor: sel ? COLORS.terracotta : COLORS.sandDeep }}
+                    onPress={() => setSelectedPartnerIdForPoints(ap.id)}>
+                    <Avatar uri={ap.avatar_url} name={ap.name} size={24} />
+                    <Text style={{ color: sel ? COLORS.onTerracotta : COLORS.ink, fontWeight: '600', fontSize: 14 }}>
+                      {ap.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </>
         )}
         {activePartners.length === 1 && (
-          <Text style={{ fontSize: 14, color: '#888', marginBottom: 4 }}>fuer {pointsPartnerName}</Text>
+          <Text style={{ fontSize: 14, color: COLORS.inkSoft, marginBottom: 4 }}>für {pointsPartnerName}</Text>
         )}
         {categories.filter(c => !c.is_global).length > 0 && (
           <>
             <Text style={s.sectionLabel}>Eigene Kategorien</Text>
             {categories.filter(c => !c.is_global).map(cat => (
-              <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
-                  <Text style={s.pts}>+{cat.points}</Text>
-                </View>
+              <TouchableOpacity key={cat.id} style={[s.card, s.iconRow, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
+                <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} />
+                <Text style={[s.cardTitle, { flex: 1 }]}>{cat.name}</Text>
+                <Text style={s.pts}>+{cat.points}</Text>
               </TouchableOpacity>
             ))}
           </>
@@ -1152,40 +1243,46 @@ export default function App() {
           const catsInGroup = categories.filter(c => c.is_global && c.category_tag === tag)
             .sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0) || a.name.localeCompare(b.name));
           if (catsInGroup.length === 0) return null;
+          const cc = catColors(tag);
           return (
             <View key={tag} style={{ gap: 8 }}>
-              <Text style={[s.sectionLabel, { marginTop: 8 }]}>{CATEGORY_TAG_LABELS[tag] ?? tag}</Text>
+              <View style={[s.iconRow, { marginTop: 12, gap: 8 }]}>
+                <MaterialCommunityIcons name={CATEGORY_TAG_ICONS[tag] as any} size={ICON_SIZE.inline} color={cc.stroke} />
+                <Text style={[s.sectionLabel, { color: cc.stroke }]}>{CATEGORY_TAG_LABELS[tag] ?? tag}</Text>
+              </View>
               {catsInGroup.map(cat => (
-                <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
-                    <Text style={s.pts}>+{cat.points}</Text>
-                  </View>
+                <TouchableOpacity key={cat.id} style={[s.card, s.iconRow, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
+                  <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} />
+                  <Text style={[s.cardTitle, { flex: 1 }]}>{cat.name}</Text>
+                  <Text style={s.pts}>+{cat.points}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           );
         })}
         {categories.filter(c => c.is_global && !CATEGORY_TAG_ORDER.includes(c.category_tag ?? '')).map(cat => (
-          <TouchableOpacity key={cat.id} style={[s.card, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={[s.cardTitle, { flex: 1, marginRight: 8 }]}>{cat.icon}  {cat.name}</Text>
-              <Text style={s.pts}>+{cat.points}</Text>
-            </View>
+          <TouchableOpacity key={cat.id} style={[s.card, s.iconRow, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
+            <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} />
+            <Text style={[s.cardTitle, { flex: 1 }]}>{cat.name}</Text>
+            <Text style={s.pts}>+{cat.points}</Text>
           </TouchableOpacity>
         ))}
         {selectedCategory?.multiplier_eligible && (
           <TouchableOpacity
             style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-              backgroundColor: withoutRequest ? '#f0fdf9' : '#fff', borderWidth: 1,
-              borderColor: withoutRequest ? '#3ECF8E' : '#ddd', borderRadius: 10, padding: 14, marginTop: 8 }}
+              backgroundColor: COLORS.surface, borderWidth: 1,
+              borderColor: withoutRequest ? COLORS.terracotta : COLORS.sandDeep, borderRadius: 10, padding: 14, marginTop: 8 }}
             onPress={() => setWithoutRequest(!withoutRequest)}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={s.cardTitle}>Ohne Aufforderung 🔮</Text>
-              <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>×1,5 Punkte, wenn er von selbst dran gedacht hat</Text>
+            <View style={[s.iconRow, { flex: 1, marginRight: 8 }]}>
+              <MaterialCommunityIcons name={ICONS.toggleUnprompted as any} size={ICON_SIZE.list}
+                color={withoutRequest ? COLORS.terracotta : COLORS.inkMuted} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.cardTitle}>Ohne Aufforderung</Text>
+                <Text style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>×1,5 Punkte, wenn er von selbst dran gedacht hat</Text>
+              </View>
             </View>
-            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: withoutRequest ? '#3ECF8E' : '#ddd', padding: 3, justifyContent: 'center' }}>
-              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', marginLeft: withoutRequest ? 18 : 0 }} />
+            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: withoutRequest ? COLORS.terracotta : COLORS.sandDeep, padding: 3, justifyContent: 'center' }}>
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.surface, marginLeft: withoutRequest ? 18 : 0 }} />
             </View>
           </TouchableOpacity>
         )}
@@ -1213,21 +1310,24 @@ export default function App() {
   if (screen === 'manage-categories') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen('group-detail')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('group-detail')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Kategorien verwalten</Text>
         <Text style={s.headerSub}>{selectedGroup?.name}</Text>
       </View>
       {loading
-        ? <View style={s.center}><ActivityIndicator color="#3ECF8E" /></View>
+        ? <View style={s.center}><ActivityIndicator color={COLORS.terracotta} /></View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 130 }}>
             <Text style={s.sectionLabel}>Standard-Kategorien · Punkte anpassen</Text>
             {categories.map(cat => (
               <View key={cat.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <Text style={{ fontSize: 18 }}>{cat.icon}</Text>
+                <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} size={ICON_SIZE.inline} circle={32} />
                 <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
-                <Text style={{ fontSize: 11, color: '#bbb' }}>Std:{cat.points}</Text>
+                <Text style={{ fontSize: 11, color: COLORS.inkMuted }}>Std:{cat.points}</Text>
                 <TextInput
-                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 6, padding: 6, width: 54, textAlign: 'center', fontSize: 15, backgroundColor: '#fff' }}
+                  style={{ borderWidth: 1, borderColor: COLORS.sandDeep, borderRadius: 6, padding: 6, width: 54, textAlign: 'center', fontSize: 15, backgroundColor: COLORS.surface, color: COLORS.ink }}
                   value={overrideInputs[cat.id] ?? String(cat.points)}
                   onChangeText={v => setOverrideInputs(prev => ({ ...prev, [cat.id]: v }))}
                   keyboardType="numeric"
@@ -1239,12 +1339,12 @@ export default function App() {
               <Text style={[s.sectionLabel, { marginTop: 8 }]}>Eigene Kategorien · Löschen</Text>
               {groupCustomCats.map(cat => (
                 <View key={cat.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                  <Text style={{ fontSize: 18 }}>{cat.icon}</Text>
+                  <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} size={ICON_SIZE.inline} circle={32} />
                   <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
                   <Text style={s.pts}>{cat.points} Pkt</Text>
                   <TouchableOpacity onPress={() => handleDeleteCustomCategory(cat.id, cat.name)}
-                    style={{ backgroundColor: '#fff0f0', borderRadius: 6, padding: 8 }}>
-                    <Text style={{ color: '#ff4444', fontSize: 13, fontWeight: '600' }}>Löschen</Text>
+                    style={{ borderRadius: 6, padding: 8 }}>
+                    <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -1265,7 +1365,10 @@ export default function App() {
   if (screen === 'create-category') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen('add-points')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('add-points')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Eigene Kategorie</Text>
         <Text style={s.headerSub}>Erstelle eine persönliche Punktekategorie</Text>
       </View>
@@ -1276,29 +1379,42 @@ export default function App() {
 
         <Text style={s.sectionLabel}>Aufwandsstufe</Text>
         <View style={{ gap: 8 }}>
-          {TIERS.map(t => (
-            <TouchableOpacity key={t.tier}
-              style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                borderWidth: 1, borderRadius: 8, padding: 12,
-                borderColor: newCatTier === t.tier ? '#3ECF8E' : '#ddd',
-                backgroundColor: newCatTier === t.tier ? '#f0fdf9' : '#fff' }}
-              onPress={() => setNewCatTier(t.tier)}>
-              <Text style={{ fontSize: 15, fontWeight: newCatTier === t.tier ? '700' : '500' }}>{t.label}</Text>
-              {newCatTier === t.tier && <Text style={{ color: '#3ECF8E', fontWeight: 'bold' }}>✓</Text>}
-            </TouchableOpacity>
-          ))}
+          {TIERS.map(t => {
+            const sel = newCatTier === t.tier;
+            return (
+              <TouchableOpacity key={t.tier}
+                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                  borderWidth: 1, borderRadius: 8, padding: 12,
+                  borderColor: sel ? COLORS.terracotta : COLORS.sandDeep,
+                  backgroundColor: COLORS.surface }}
+                onPress={() => setNewCatTier(t.tier)}>
+                <Text style={{ fontSize: 15, fontWeight: sel ? '700' : '500', color: COLORS.ink }}>{t.label}</Text>
+                {sel && <MaterialCommunityIcons name={ICONS.actionCheck as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />}
+              </TouchableOpacity>
+            );
+          })}
         </View>
-        <Text style={{ fontSize: 12, color: '#aaa' }}>
+        <Text style={{ fontSize: 12, color: COLORS.inkMuted }}>
           Tier 5 (40 Punkte) ist die maximale Aufwandsstufe für eigene Kategorien.
         </Text>
 
-        <Text style={s.sectionLabel}>Emoji-Icon</Text>
-        <TextInput style={[s.input, { fontSize: 24, textAlign: 'center' }]}
-          placeholder="⭐" value={newCatIcon} onChangeText={setNewCatIcon}
-          maxLength={2} />
-        <Text style={{ fontSize: 12, color: '#aaa', textAlign: 'center', marginTop: -8 }}>
-          Tippe ein Emoji ein (leer lassen = ⭐)
-        </Text>
+        <Text style={s.sectionLabel}>Symbol</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          {CUSTOM_CATEGORY_ICON_CHOICES.map(key => {
+            const sel = newCatIconKey === key;
+            return (
+              <TouchableOpacity key={key}
+                style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center',
+                  borderWidth: sel ? 2 : 1,
+                  borderColor: sel ? COLORS.terracotta : COLORS.sandDeep,
+                  backgroundColor: COLORS.surface }}
+                onPress={() => setNewCatIconKey(key)}>
+                <MaterialCommunityIcons name={ICONS[key] as any} size={ICON_SIZE.list}
+                  color={sel ? COLORS.terracotta : COLORS.inkSoft} />
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </ScrollView>
       <View style={s.footer}>
         {loading ? <ActivityIndicator /> : (
@@ -1314,7 +1430,10 @@ export default function App() {
   if (screen === 'help') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen(helpReturnScreen)}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen(helpReturnScreen)}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Hilfe & Anleitung</Text>
       </View>
       <View style={s.tabs}>
@@ -1329,42 +1448,51 @@ export default function App() {
       <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
         {helpTab === 'frauen' && <>
           {[
-            { icon: '👥', title: 'Gruppe erstellen', text: 'Tippe auf "Gruppe erstellen" und vergib einen Namen. Du bekommst automatisch einen 6-stelligen Code — teile ihn mit deinen Freundinnen.' },
-            { icon: '🔗', title: 'Freundinnen einladen', text: 'Öffne deine Gruppe und tippe oben rechts auf den Code. Der Teilen-Dialog öffnet sich automatisch — ab zu WhatsApp!' },
-            { icon: '💑', title: 'Partner anlegen & verbinden', text: 'Beim ersten Start legst du deinen Partner an und bekommst automatisch einen Code (P-XXXXXXXX). Teile ihn mit ihm — dann kann er sich mit eigenem Login verbinden und seine Badges sehen.' },
-            { icon: '⭐', title: 'Punkte vergeben', text: 'Wähle eine Aufgabe aus einer der vier Kategorien (Haushalt, Mental Load, Romantik, Verlässlichkeit). Jede hat einen festen Punktwert nach Aufwand: 2 / 5 / 10 / 20 / 40. Bei Haushalt & Mental Load kannst du zusätzlich "Ohne Aufforderung" aktivieren — gibt ×1,5 Punkte.' },
-            { icon: '🚦', title: 'Anti-Farming-Schutz', text: 'Dieselbe Aufgabe zählt am selben Tag beim 2. Mal nur halb, ab dem 3. Mal 0 Punkte. Außerdem gibt es ein Tageslimit von 80 Punkten pro Partner — damit nicht ein einziger guter Tag die ganze Saison entscheidet.' },
-            { icon: '📊', title: 'Ranking & Saisontitel', text: 'Wähle "Woche", "Monat" oder "Jahr". Wer zum Ende eines Zeitraums vorne liegt, bekommt automatisch den Titel "Spieler der Woche" / "Monatssieger" / "Saisonsieger" als Badge.' },
-            { icon: '↩️', title: 'Punkte-Eintrag zurücknehmen', text: 'Neben deinen eigenen Einträgen im Aktivitäts-Log siehst du ein kleines ✕ — damit kannst du versehentliche Einträge wieder löschen.' },
-            { icon: '⚙️', title: 'Kategorien anpassen', text: 'Über "Kategorien anpassen" in deiner Gruppe kannst du Punktwerte für eure Gruppe individuell überschreiben — denn nicht alle Männer sind gleich faul.' },
-            { icon: '✨', title: 'Eigene Kategorie', text: 'Erfinde eigene Aufgaben und wähle dafür eine der fünf Aufwandsstufen (2/5/10/20/40 Punkte) — kein freies Zahlenfeld mehr, damit die Werte fair und vergleichbar bleiben.' },
-            { icon: '🎖️', title: 'Badges deines Partners ansehen', text: 'Tippe in "Meine Gruppen" auf seinen Namen — du siehst dieselbe Badge-Übersicht wie er selbst: Meilensteine, Kategorie-Spezialisten, Konsistenz-Serien, Saisontitel und versteckte Erfolge.' },
-            { icon: '🗑️', title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link.' },
+            { icon: ICONS.navGroups, title: 'Gruppe erstellen', text: 'Tippe auf "Gruppe erstellen" und vergib einen Namen. Du bekommst automatisch einen 6-stelligen Code — teile ihn mit deinen Freundinnen.' },
+            { icon: ICONS.inviteLink, title: 'Freundinnen einladen', text: 'Öffne deine Gruppe und tippe oben rechts auf den Code. Der Teilen-Dialog öffnet sich automatisch — ab zu WhatsApp!' },
+            { icon: ICONS.helpPartner, title: 'Partner anlegen & verbinden', text: 'Beim ersten Start legst du deinen Partner an und bekommst automatisch einen Code (P-XXXXXXXX). Teile ihn mit ihm — dann kann er sich mit eigenem Login verbinden und seine Badges sehen.' },
+            { icon: ICONS.actionAddPoints, title: 'Punkte vergeben', text: 'Wähle eine Aufgabe aus einer der vier Kategorien (Haushalt, Mental Load, Romantik, Verlässlichkeit). Jede hat einen festen Punktwert nach Aufwand: 2 / 5 / 10 / 20 / 40. Bei Haushalt & Mental Load kannst du zusätzlich "Ohne Aufforderung" aktivieren — gibt ×1,5 Punkte.' },
+            { icon: ICONS.helpAntiFarming, title: 'Anti-Farming-Schutz', text: 'Dieselbe Aufgabe zählt am selben Tag beim 2. Mal nur halb, ab dem 3. Mal 0 Punkte. Außerdem gibt es ein Tageslimit von 80 Punkten pro Partner — damit nicht ein einziger guter Tag die ganze Saison entscheidet.' },
+            { icon: ICONS.helpRanking, title: 'Ranking & Saisontitel', text: 'Wähle "Woche", "Monat" oder "Jahr". Wer zum Ende eines Zeitraums vorne liegt, bekommt automatisch den Titel "Spieler der Woche" / "Monatssieger" / "Saisonsieger" als Badge.' },
+            { icon: ICONS.actionUndo, title: 'Punkte-Eintrag zurücknehmen', text: 'Neben deinen eigenen Einträgen im Aktivitäts-Log siehst du ein kleines Kreuz — damit kannst du versehentliche Einträge wieder löschen.' },
+            { icon: ICONS.navSettings, title: 'Kategorien anpassen', text: 'Über "Kategorien anpassen" in deiner Gruppe kannst du Punktwerte für eure Gruppe individuell überschreiben — denn nicht alle Männer sind gleich faul.' },
+            { icon: ICONS.helpCustomCategory, title: 'Eigene Kategorie', text: 'Erfinde eigene Aufgaben und wähle dafür eine der fünf Aufwandsstufen (2/5/10/20/40 Punkte) — kein freies Zahlenfeld mehr, damit die Werte fair und vergleichbar bleiben.' },
+            { icon: ICONS.badgeSeasonWinner, title: 'Badges deines Partners ansehen', text: 'Tippe in "Meine Gruppen" auf seinen Namen — du siehst dieselbe Badge-Übersicht wie er selbst: Meilensteine, Kategorie-Spezialisten, Konsistenz-Serien, Saisontitel und versteckte Erfolge.' },
+            { icon: ICONS.actionDelete, title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link.' },
           ].map(item => (
             <View key={item.title} style={s.card}>
-              <Text style={[s.cardTitle, { marginBottom: 4 }]}>{item.icon}  {item.title}</Text>
-              <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.text}</Text>
+              <View style={[s.iconRow, { marginBottom: 6 }]}>
+                <MaterialCommunityIcons name={item.icon as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
+                <Text style={[s.cardTitle, { flex: 1 }]}>{item.title}</Text>
+              </View>
+              <Text style={{ fontSize: 14, color: COLORS.inkSoft, lineHeight: 20 }}>{item.text}</Text>
             </View>
           ))}
         </>}
 
         {helpTab === 'maenner' && <>
-          <View style={[s.card, { backgroundColor: '#f0fdf9' }]}>
-            <Text style={[s.cardTitle, { marginBottom: 6 }]}>👀 Hallo, du.</Text>
-            <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>
+          <View style={s.card}>
+            <View style={[s.iconRow, { marginBottom: 6 }]}>
+              <MaterialCommunityIcons name={ICONS.helpPeek as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
+              <Text style={[s.cardTitle, { flex: 1 }]}>Hallo, du.</Text>
+            </View>
+            <Text style={{ fontSize: 14, color: COLORS.inkSoft, lineHeight: 20 }}>
               Das hier richtet sich eigentlich an deine Freundin. Aber schön, dass du reinschaust — das allein könnte schon Punkte geben.
             </Text>
           </View>
           {[
-            { icon: '🔑', title: 'Anmelden & Code eingeben', text: 'Registrier dich mit E-Mail & Passwort, dann gib den Code ein, den dir deine Partnerin geschickt hat (P-XXXXXXXX). Du kannst mehrere Codes verbinden, falls mehr als eine Frau dich bewertet.' },
-            { icon: '🎖️', title: 'Deine Badge-Übersicht', text: 'Nach dem Verbinden siehst du direkt alle Badges: verdiente sind farbig, offene nur mit ausgegrautem Symbol — mit Fortschrittsbalken bei Meilensteinen und Kategorie-Spezialisten.' },
-            { icon: '🔥', title: 'Konsistenz zahlt sich aus', text: '"Die Serie", "Marathonmann" und "Ironman" belohnen mehrere Wochen in Folge mit mindestens 20 Punkten — Regelmäßigkeit schlägt Strohfeuer.' },
-            { icon: '🏆', title: 'Saisontitel', text: '"Spieler der Woche", "Monatssieger" und "Saisonsieger" werden automatisch an den Erstplatzierten jeder Gruppe vergeben.' },
-            { icon: '🔮', title: 'Geheime Badges', text: 'Es gibt sechs versteckte Erfolge, die du erst siehst, wenn du sie verdient hast. Mehr wird nicht verraten — der Überraschungsmoment ist die Belohnung.' },
+            { icon: ICONS.helpLogin, title: 'Anmelden & Code eingeben', text: 'Registrier dich mit E-Mail & Passwort, dann gib den Code ein, den dir deine Partnerin geschickt hat (P-XXXXXXXX). Du kannst mehrere Codes verbinden, falls mehr als eine Frau dich bewertet.' },
+            { icon: ICONS.badgeLegend, title: 'Deine Badge-Übersicht', text: 'Nach dem Verbinden siehst du direkt alle Badges: verdiente sind farbig, offene nur mit ausgegrautem Symbol — mit Fortschrittsbalken bei Meilensteinen und Kategorie-Spezialisten.' },
+            { icon: ICONS.badgeStreak4, title: 'Konsistenz zahlt sich aus', text: '"Die Serie", "Marathonmann" und "Ironman" belohnen mehrere Wochen in Folge mit mindestens 20 Punkten — Regelmäßigkeit schlägt Strohfeuer.' },
+            { icon: ICONS.badgeWeekWinner, title: 'Saisontitel', text: '"Spieler der Woche", "Monatssieger" und "Saisonsieger" werden automatisch an den Erstplatzierten jeder Gruppe vergeben.' },
+            { icon: ICONS.badgeClairvoyant, title: 'Geheime Badges', text: 'Es gibt sechs versteckte Erfolge, die du erst siehst, wenn du sie verdient hast. Mehr wird nicht verraten — der Überraschungsmoment ist die Belohnung.' },
           ].map(item => (
             <View key={item.title} style={s.card}>
-              <Text style={[s.cardTitle, { marginBottom: 4 }]}>{item.icon}  {item.title}</Text>
-              <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.text}</Text>
+              <View style={[s.iconRow, { marginBottom: 6 }]}>
+                <MaterialCommunityIcons name={item.icon as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
+                <Text style={[s.cardTitle, { flex: 1 }]}>{item.title}</Text>
+              </View>
+              <Text style={{ fontSize: 14, color: COLORS.inkSoft, lineHeight: 20 }}>{item.text}</Text>
             </View>
           ))}
         </>}
@@ -1372,18 +1500,21 @@ export default function App() {
         {helpTab === 'faq' && <>
           {[
             { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Entweder wurden noch keine Punkte für ihn vergeben, oder er ist für diese Gruppe deaktiviert (siehe "Meine Partner in dieser Gruppe" im Gruppen-Detail).' },
-            { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Ja — im Aktivitäts-Log deiner Gruppe kannst du eigene Einträge über das kleine ✕ löschen.' },
+            { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Ja — im Aktivitäts-Log deiner Gruppe kannst du eigene Einträge über das kleine Kreuz löschen.' },
             { q: 'Sieht mein Partner die Punkte?', a: 'Er sieht seine Badges und seinen Fortschritt über sein eigenes Profil, aber nicht das direkte Ranking oder die Gruppen-Ansicht — die bleibt euch Frauen vorbehalten.' },
             { q: 'Warum bekomme ich manchmal 0 Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute schon zweimal für ihn eingetragen (Anti-Farming-Schutz), oder das Tageslimit von 80 Punkten ist erreicht. Im Log steht dann "Tageslimit erreicht".' },
             { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
             { q: 'Kann ich eine Gruppe löschen?', a: 'Nur wenn du sie erstellt hast — dann findest du einen "Gruppe löschen"-Link auf der Gruppenkarte in "Meine Gruppen".' },
-            { q: 'Wie lösche ich meinen Account?', a: 'Profil & Einstellungen → "Konto löschen". Achtung: alle Daten werden unwiderruflich gelöscht.' },
+            { q: 'Wie lösche ich meinen Account?', a: 'In "Profil & Einstellungen" unten auf "Konto löschen" tippen. Achtung: alle Daten werden unwiderruflich gelöscht.' },
           ].map(item => (
             <View key={item.q} style={s.card}>
-              <Text style={[s.cardTitle, { fontSize: 14, marginBottom: 6 }]}>❓  {item.q}</Text>
-              <Text style={{ fontSize: 14, color: '#555', lineHeight: 20 }}>{item.a}</Text>
+              <View style={[s.iconRow, { marginBottom: 6 }]}>
+                <MaterialCommunityIcons name={ICONS.navHelp as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{item.q}</Text>
+              </View>
+              <Text style={{ fontSize: 14, color: COLORS.inkSoft, lineHeight: 20 }}>{item.a}</Text>
             </View>
           ))}
         </>}
@@ -1409,12 +1540,13 @@ export default function App() {
         </TouchableOpacity>
       )}
       {manConnections.length > 0 && (
-        <TouchableOpacity onPress={() => setScreen('man-profile')}>
-          <Text style={[s.link, { marginTop: 12 }]}>← Zurück zum Profil</Text>
+        <TouchableOpacity style={[s.iconRow, { marginTop: 12, gap: 4 }]} onPress={() => setScreen('man-profile')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.link}>Zurück zum Profil</Text>
         </TouchableOpacity>
       )}
       <TouchableOpacity onPress={handleLogout} style={{ marginTop: 8 }}>
-        <Text style={[s.link, { color: '#aaa' }]}>Abmelden</Text>
+        <Text style={[s.link, { color: COLORS.inkMuted }]}>Abmelden</Text>
       </TouchableOpacity>
       <StatusBar style="auto" />
     </View>
@@ -1432,10 +1564,10 @@ export default function App() {
           : manConnections.map(conn => (
             <View key={conn.id} style={{ gap: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <Avatar uri={(conn.partners as any).avatar_url} name={(conn.partners as any).name} size={56} />
+                <Avatar uri={(conn.partners as any).avatar_url} name={(conn.partners as any).name} size={62} />
                 <Text style={s.headerTitle}>{(conn.partners as any).name}</Text>
               </View>
-              <BadgeGrid partnerId={(conn.partners as any).id} />
+              <BadgeGrid partnerId={(conn.partners as any).id} surroundingColor={COLORS.sand} />
             </View>
           ))
         }
@@ -1450,14 +1582,16 @@ export default function App() {
                   <Text style={s.cardSub}>Code: {conn.invite_code}</Text>
                 </View>
                 <TouchableOpacity onPress={() => handleDisconnect(conn.id, (conn.partners as any).name)}
-                  style={{ backgroundColor: '#fff0f0', borderRadius: 6, padding: 8 }}>
-                  <Text style={{ color: '#ff4444', fontSize: 13, fontWeight: '600' }}>Trennen</Text>
+                  style={[s.iconRow, { borderRadius: 6, padding: 8, gap: 4 }]}>
+                  <MaterialCommunityIcons name={ICONS.actionClose as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                  <Text style={{ color: COLORS.terracotta, fontSize: 13, fontWeight: '600' }}>Trennen</Text>
                 </TouchableOpacity>
               </View>
             </View>
           ))}
-          <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setScreen('enter-invite-code')}>
-            <Text style={s.btnOutlineText}>+ Weiteren Code eingeben</Text>
+          <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={() => setScreen('enter-invite-code')}>
+            <MaterialCommunityIcons name={ICONS.inviteCode as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+            <Text style={s.btnOutlineText}>Weiteren Code eingeben</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1473,9 +1607,12 @@ export default function App() {
   if (screen === 'partner-badges') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('groups')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 }}>
-          {viewedPartner && <Avatar uri={viewedPartner.avatar_url} name={viewedPartner.name} size={48} />}
+          {viewedPartner && <Avatar uri={viewedPartner.avatar_url} name={viewedPartner.name} size={62} />}
           <View>
             <Text style={s.headerTitle}>{viewedPartner?.name}</Text>
             <Text style={s.headerSub}>Badges & Erfolge</Text>
@@ -1483,7 +1620,7 @@ export default function App() {
         </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 20 }}>
-        {viewedPartner && <BadgeGrid partnerId={viewedPartner.id} />}
+        {viewedPartner && <BadgeGrid partnerId={viewedPartner.id} surroundingColor={COLORS.sand} />}
       </ScrollView>
       <StatusBar style="auto" />
     </View>
@@ -1492,7 +1629,10 @@ export default function App() {
   if (screen === 'profile') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity onPress={() => setScreen('groups')}><Text style={s.back}>← Zurück</Text></TouchableOpacity>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('groups')}>
+          <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+          <Text style={s.back}>Zurück</Text>
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Profil & Einstellungen</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 60 }}>
@@ -1505,7 +1645,7 @@ export default function App() {
           <TouchableOpacity style={s.btn} onPress={handleUpdateEmail} disabled={loading}>
             <Text style={s.btnText}>E-Mail speichern</Text>
           </TouchableOpacity>
-          <Text style={{ fontSize: 11, color: '#bbb', marginTop: 6 }}>
+          <Text style={{ fontSize: 11, color: COLORS.inkMuted, marginTop: 6 }}>
             Änderungen müssen per E-Mail bestätigt werden.
           </Text>
         </View>
@@ -1528,7 +1668,10 @@ export default function App() {
           <View key={p.id} style={s.card}>
             <TouchableOpacity onPress={() => handlePickAvatar(p.id)} style={{ alignItems: 'center', marginBottom: 12 }}>
               <Avatar uri={p.avatar_url} name={editPartnerNames[p.id] ?? p.name} size={72} />
-              <Text style={{ fontSize: 12, color: '#3ECF8E', marginTop: 6, fontWeight: '600' }}>Foto ändern</Text>
+              <View style={[s.iconRow, { marginTop: 6, gap: 4 }]}>
+                <MaterialCommunityIcons name={ICONS.actionPhoto as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                <Text style={{ fontSize: 12, color: COLORS.terracotta, fontWeight: '600' }}>Foto ändern</Text>
+              </View>
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <TextInput
@@ -1538,9 +1681,9 @@ export default function App() {
                 placeholder="Name des Partners"
               />
               <TouchableOpacity
-                style={{ padding: 8, backgroundColor: '#fff0f0', borderRadius: 8, borderWidth: 1, borderColor: '#ffc0c0' }}
+                style={{ padding: 10, backgroundColor: COLORS.sand, borderRadius: 8, borderWidth: 1, borderColor: COLORS.terracotta }}
                 onPress={() => handleDeletePartner(p.id, editPartnerNames[p.id] ?? p.name)}>
-                <Text style={{ fontSize: 16 }}>🗑️</Text>
+                <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
               </TouchableOpacity>
             </View>
             <TouchableOpacity style={[s.btn, { marginBottom: 14 }]}
@@ -1549,11 +1692,12 @@ export default function App() {
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View>
-                <Text style={{ fontSize: 11, color: '#aaa', marginBottom: 3 }}>Einladungscode</Text>
-                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#3ECF8E', letterSpacing: 2 }}>{p.invite_code}</Text>
+                <Text style={{ fontSize: 11, color: COLORS.inkMuted, marginBottom: 3 }}>Einladungscode</Text>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: COLORS.terracotta, letterSpacing: 2 }}>{p.invite_code}</Text>
               </View>
               <TouchableOpacity style={s.codeBtn}
-                onPress={() => Share.share({ message: `Dein Einladungscode fuer die Partner Fantasy League: ${p.invite_code}` })}>
+                onPress={() => Share.share({ message: `Dein Einladungscode für die Partner Fantasy League: ${p.invite_code}` })}>
+                <MaterialCommunityIcons name={ICONS.actionShare as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
                 <Text style={s.codeBtnText}>Teilen</Text>
               </TouchableOpacity>
             </View>
@@ -1581,24 +1725,27 @@ export default function App() {
                 }
               </View>
             </View>
-          : <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={() => setShowAddPartnerForm(true)}>
-              <Text style={s.btnOutlineText}>+ Weiteren Partner anlegen</Text>
+          : <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={() => setShowAddPartnerForm(true)}>
+              <MaterialCommunityIcons name={ICONS.actionAddPoints as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+              <Text style={s.btnOutlineText}>Weiteren Partner anlegen</Text>
             </TouchableOpacity>
         }
 
         <Text style={[s.sectionLabel, { marginTop: 4 }]}>Konto</Text>
-        <TouchableOpacity style={[s.btn, s.btnOutline]} onPress={handleLogout}>
+        <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={handleLogout}>
+          <MaterialCommunityIcons name={ICONS.actionLogout as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
           <Text style={s.btnOutlineText}>Abmelden</Text>
         </TouchableOpacity>
         {loading
-          ? <ActivityIndicator color="#ff4444" />
+          ? <ActivityIndicator color={COLORS.terracotta} />
           : <TouchableOpacity
-              style={[s.btn, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ff4444' }]}
+              style={[s.btn, s.btnDanger, s.iconRow, { justifyContent: 'center' }]}
               onPress={handleDeleteAccount}>
-              <Text style={{ color: '#ff4444', fontWeight: 'bold', fontSize: 16 }}>Konto löschen</Text>
+              <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+              <Text style={s.dangerText}>Konto löschen</Text>
             </TouchableOpacity>
         }
-        <Text style={{ fontSize: 12, color: '#bbb', textAlign: 'center' }}>
+        <Text style={{ fontSize: 12, color: COLORS.inkMuted, textAlign: 'center' }}>
           Das Löschen entfernt alle deine Daten dauerhaft.
         </Text>
       </ScrollView>
@@ -1610,34 +1757,40 @@ export default function App() {
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#f7f7f7' },
-  center: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  header: { backgroundColor: '#fff', paddingTop: 56, paddingBottom: 16, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: '#eee' },
-  headerTitle: { fontSize: 22, fontWeight: 'bold' },
-  headerSub: { fontSize: 13, color: '#3ECF8E', marginTop: 2 },
-  back: { fontSize: 14, color: '#3ECF8E', marginBottom: 4 },
-  codeBtn: { backgroundColor: '#f0fdf9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
-  codeBtnText: { fontSize: 13, color: '#3ECF8E', fontWeight: '600' },
-  footer: { padding: 20, paddingBottom: 60, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', gap: 10, alignItems: 'center' },
-  sectionLabel: { fontSize: 12, fontWeight: '600', color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 8 },
-  subtitle: { fontSize: 15, color: '#555', marginBottom: 24 },
-  empty: { color: '#aaa', fontSize: 15 },
-  input: { width: '100%', borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 16, backgroundColor: '#fff' },
-  btn: { backgroundColor: '#3ECF8E', borderRadius: 8, padding: 14, width: '100%', alignItems: 'center' },
-  btnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  btnOutline: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#3ECF8E' },
-  btnOutlineText: { color: '#3ECF8E', fontWeight: 'bold', fontSize: 16 },
+  screen: { flex: 1, backgroundColor: COLORS.sand },
+  center: { flex: 1, backgroundColor: COLORS.sand, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  header: { backgroundColor: COLORS.sandDeep, paddingTop: 56, paddingBottom: 16, paddingHorizontal: 20 },
+  headerTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.ink },
+  headerSub: { fontSize: 13, color: COLORS.terracotta, marginTop: 2 },
+  back: { fontSize: 14, color: COLORS.terracotta, marginBottom: 4 },
+  backRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  codeBtn: { backgroundColor: COLORS.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  codeBtnText: { fontSize: 13, color: COLORS.terracotta, fontWeight: '600' },
+  footer: { padding: 20, paddingBottom: 60, backgroundColor: COLORS.sandDeep, gap: 10, alignItems: 'center' },
+  sectionLabel: { fontSize: 12, fontWeight: '600', color: COLORS.inkMuted, textTransform: 'uppercase', letterSpacing: 1 },
+  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 8, color: COLORS.ink },
+  subtitle: { fontSize: 15, color: COLORS.inkSoft, marginBottom: 24 },
+  empty: { color: COLORS.inkMuted, fontSize: 15 },
+  input: { width: '100%', borderWidth: 1, borderColor: COLORS.sandDeep, borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 16, backgroundColor: COLORS.surface, color: COLORS.ink },
+  btn: { backgroundColor: COLORS.terracotta, borderRadius: 8, padding: 14, width: '100%', alignItems: 'center' },
+  btnText: { color: COLORS.onTerracotta, fontWeight: 'bold', fontSize: 16 },
+  btnOutline: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.terracotta },
+  btnOutlineText: { color: COLORS.terracotta, fontWeight: 'bold', fontSize: 16 },
   btnDisabled: { opacity: 0.4 },
-  link: { color: '#3ECF8E', fontSize: 14 },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  cardSelected: { borderWidth: 2, borderColor: '#3ECF8E' },
-  cardTitle: { fontSize: 16, fontWeight: '600' },
-  cardSub: { fontSize: 13, color: '#aaa' },
-  pts: { fontSize: 15, fontWeight: 'bold', color: '#3ECF8E' },
-  tabs: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee' },
+  btnDanger: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.terracotta },
+  dangerText: { color: COLORS.terracotta, fontWeight: 'bold', fontSize: 16 },
+  link: { color: COLORS.terracotta, fontSize: 14 },
+  card: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 16, shadowColor: COLORS.ink, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  cardSelected: { borderWidth: 2, borderColor: COLORS.terracotta },
+  cardTitle: { fontSize: 16, fontWeight: '600', color: COLORS.ink },
+  cardSub: { fontSize: 13, color: COLORS.inkMuted },
+  pts: { fontSize: 15, fontWeight: 'bold', color: COLORS.terracotta },
+  tabs: { flexDirection: 'row', backgroundColor: COLORS.sandDeep },
   tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: '#3ECF8E' },
-  tabText: { fontSize: 14, color: '#aaa' },
-  tabTextActive: { color: '#3ECF8E', fontWeight: 'bold' },
+  tabActive: { borderBottomWidth: 2, borderBottomColor: COLORS.terracotta },
+  tabText: { fontSize: 14, color: COLORS.inkMuted },
+  tabTextActive: { color: COLORS.terracotta, fontWeight: 'bold' },
+  // Kreis mit Kategorie-Icon (Aufgabenlisten, Aktivitätslog)
+  catCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  iconRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
 });
