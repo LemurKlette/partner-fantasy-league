@@ -60,6 +60,32 @@ from (values
 ) as v(name, icon_key, tier)
 where b.name = v.name;
 
+-- ── 2b. Alt-Kategorien ohne Tier auf das Tier-System heben ──────
+-- Eigene Kategorien, die vor Migration 16 angelegt wurden, haben weder ein
+-- tier noch einen gueltigen Tier-Punktwert (z.B. 15 Punkte). Die CHECK-
+-- Constraints aus Migration 16 wurden als NOT VALID angelegt und greifen
+-- deshalb erst, sobald die Zeile angefasst wird -- was das icon_key-Update
+-- weiter unten tut. Ohne diesen Schritt bricht die Migration dort ab.
+--
+-- Gerundet wird auf den naechstgelegenen Tier-Wert, bei Gleichstand nach
+-- unten, damit keine Punktwerte aufgeblaeht werden (15 -> 10, nicht 20).
+update point_categories
+set tier = case
+      when points <= 3  then 1
+      when points <= 7  then 2
+      when points <= 15 then 3
+      when points <= 30 then 4
+      else 5
+    end,
+    points = case
+      when points <= 3  then 2
+      when points <= 7  then 5
+      when points <= 15 then 10
+      when points <= 30 then 20
+      else 40
+    end
+where is_global = false and tier is null;
+
 -- ── 3. Kategorien: Emoji-Icons durch icon_key ersetzen ──────────
 update point_categories c set icon_key = v.icon_key
 from (values
@@ -116,7 +142,15 @@ update point_categories set icon_key = case category_tag
   end
 where icon_key is null;
 
--- ── 4. Kontrolle ────────────────────────────────────────────────
--- Sollte 0 Zeilen liefern:
+-- ── 4. Constraints jetzt validieren ─────────────────────────────
+-- Nachdem die Alt-Daten bereinigt sind, koennen die NOT VALID angelegten
+-- Constraints aus Migration 16 endgueltig geprueft werden. Schlaegt das
+-- fehl, gibt es noch Zeilen, die nicht zum Tier-System passen.
+alter table point_categories validate constraint point_categories_points_tier_check;
+alter table point_categories validate constraint point_categories_custom_tier_required;
+
+-- ── 5. Kontrolle ────────────────────────────────────────────────
+-- Sollte jeweils 0 Zeilen liefern:
 -- select name from badges where icon_key is null;
 -- select name from point_categories where icon_key is null;
+-- select name, points, tier from point_categories where is_global = false and tier is null;
