@@ -399,3 +399,18 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
 - `loadRankingForGroup` und `openGroup` führten mehrere unabhängige Abfragen nacheinander
   aus; jetzt laufen sie parallel, und die Schleife für neue Gruppen-Mitgliedschaften ist ein
   Bulk-Insert statt N Einzelaufrufe
+
+---
+
+# Badge-Seite und Punktevergabe: 5 Verbesserungen (2026-08-06)
+
+## Schritt 1 – Spezialisten-Badges nach Kategorie gruppiert
+- Die Kategorie-Spezialisten (Typ 2) standen bisher in einem flachen Raster, in dem sich die
+  vier Kategorien optisch vermischten
+- Jetzt eine Überschrift je Kategorie in der jeweiligen Kategoriefarbe (Ocker, Olivgrün,
+  Beere, Petrol), darunter genau 3 Badges pro Zeile
+- Meilensteine, Konsistenz und Saisontitel bleiben in einem einfachen Raster (sie haben
+  keine Kategorie), geheime Badges bilden den Abschluss ganz unten
+- Einheitliche Kachelbreite von 31 % für alle Raster, damit die Spalten überall fluchten
+- `Badge` bekam dafür zwei neue Props: `width` (Rasterbreite) und `onPress` (Vorbereitung
+  für das Info-Modal in Schritt 2)

@@ -3,7 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 import Badge from './Badge';
 import type { BadgeTier } from './BadgeFrame';
-import { CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from '../theme/colors';
+import { CATEGORY_COLORS, CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from '../theme/colors';
 
 type BadgeRow = {
   id: string;
@@ -25,8 +25,22 @@ const TYPE_LABELS: Record<number, string> = {
   2: 'Kategorie-Spezialisten',
   3: 'Konsistenz',
   4: 'Saisontitel',
-  5: 'Geheime Erfolge',
+  5: 'Geheime Badges',
 };
+
+// Reihenfolge der Kategorien innerhalb der Spezialisten-Badges
+const CATEGORY_ORDER: CategoryKey[] = ['household', 'mentalLoad', 'romance', 'reliability'];
+const CATEGORY_LABELS: Record<string, string> = {
+  household: 'Haushalt',
+  mentalLoad: 'Mental Load',
+  romance: 'Romantik & Aufmerksamkeit',
+  reliability: 'Verlässlichkeit & Partnerschaft',
+};
+
+function categoryOf(b: BadgeRow): CategoryKey | null {
+  if (!b.category_filter) return null;
+  return (CATEGORY_TAG_TO_KEY[b.category_filter] as CategoryKey) ?? null;
+}
 
 export default function BadgeGrid({
   partnerId,
@@ -103,35 +117,64 @@ export default function BadgeGrid({
   const grouped: Record<number, BadgeDisplay[]> = {};
   badges.forEach(b => { (grouped[b.badge_type] ??= []).push(b); });
 
+  const renderBadge = (b: BadgeDisplay) => (
+    <Badge
+      key={b.id}
+      name={b.name}
+      iconKey={b.icon_key}
+      imageUrl={b.image_url}
+      tier={(b.tier as BadgeTier) ?? null}
+      category={categoryOf(b)}
+      earned={b.earned}
+      count={b.count}
+      isHidden={b.is_hidden}
+      progressCurrent={b.progressCurrent}
+      progressTarget={b.trigger_value}
+      surroundingColor={surroundingColor}
+      width="31%"
+    />
+  );
+
+  // Reihenfolge: erst die Spezialisten nach Kategorie gruppiert, danach die
+  // kategorielosen Typen, ganz unten die geheimen Badges.
+  const specialists = grouped[2] ?? [];
+
   return (
     <View style={{ gap: 20 }}>
-      {[1, 2, 3, 4, 5].filter(t => grouped[t]?.length).map(type => (
+      {specialists.length > 0 && (
+        <View>
+          <Text style={s.groupLabel}>{TYPE_LABELS[2]}</Text>
+          {CATEGORY_ORDER.map(key => {
+            const list = specialists.filter(b => categoryOf(b) === key);
+            if (list.length === 0) return null;
+            return (
+              <View key={key}>
+                <Text style={[s.categoryHeader, { color: CATEGORY_COLORS[key].stroke }]}>
+                  {CATEGORY_LABELS[key] ?? key}
+                </Text>
+                <View style={s.grid}>{list.map(renderBadge)}</View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Meilensteine, Konsistenz und Saisontitel haben keine Kategorie und
+          bleiben deshalb in einem einfachen Raster. */}
+      {[1, 3, 4].filter(t => grouped[t]?.length).map(type => (
         <View key={type} style={{ gap: 10 }}>
           <Text style={s.groupLabel}>{TYPE_LABELS[type]}</Text>
-          <View style={s.grid}>
-            {grouped[type].map(b => (
-              <Badge
-                key={b.id}
-                name={b.name}
-                iconKey={b.icon_key}
-                imageUrl={b.image_url}
-                tier={(b.tier as BadgeTier) ?? null}
-                category={
-                  b.category_filter
-                    ? (CATEGORY_TAG_TO_KEY[b.category_filter] as CategoryKey) ?? null
-                    : null
-                }
-                earned={b.earned}
-                count={b.count}
-                isHidden={b.is_hidden}
-                progressCurrent={b.progressCurrent}
-                progressTarget={b.trigger_value}
-                surroundingColor={surroundingColor}
-              />
-            ))}
-          </View>
+          <View style={s.grid}>{grouped[type].map(renderBadge)}</View>
         </View>
       ))}
+
+      {(grouped[5]?.length ?? 0) > 0 && (
+        <View style={{ gap: 10 }}>
+          <Text style={s.groupLabel}>{TYPE_LABELS[5]}</Text>
+          <View style={s.grid}>{grouped[5].map(renderBadge)}</View>
+        </View>
+      )}
+
       {badges.length === 0 && <Text style={{ color: COLORS.inkMuted }}>Noch keine Badges verfügbar.</Text>}
     </View>
   );
@@ -145,7 +188,10 @@ const s = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  // 3 Kacheln pro Zeile: 3 × 31 % plus zweimal columnGap passen auch auf
+  // schmale Geraete, ohne dass die dritte Kachel umbricht.
+  grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 14 },
+  categoryHeader: { fontSize: 14, fontWeight: '600', marginTop: 16, marginBottom: 8 },
   errorBox: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,

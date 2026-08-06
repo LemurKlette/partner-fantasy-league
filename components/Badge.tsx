@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import BadgeFrame, { frameColors, type BadgeTier } from './BadgeFrame';
 import { COLORS, type CategoryKey } from '../theme/colors';
 import { iconFor } from '../theme/icons';
@@ -26,6 +26,10 @@ export type BadgeProps = {
   size?: number;
   /** Hintergrundfarbe des umgebenden Screens — fuer den Rand des Zaehlers. */
   surroundingColor?: string;
+  /** Breite der Kachel. Fuer Rasterlayouts z.B. '31%'. */
+  width?: number | string;
+  /** Oeffnet die Erklaerung zum Badge. */
+  onPress?: () => void;
 };
 
 export default function Badge({
@@ -41,6 +45,8 @@ export default function Badge({
   progressTarget = null,
   size = 46,
   surroundingColor = COLORS.surface,
+  width,
+  onPress,
 }: BadgeProps) {
   // Versteckte Badges vor dem Verdienen gar nicht rendern — auch nicht ausgegraut.
   if (isHidden && !earned) return null;
@@ -52,8 +58,14 @@ export default function Badge({
   const showProgress =
     !earned && progressCurrent != null && progressTarget != null && progressTarget > 0;
 
+  const Container: any = onPress ? TouchableOpacity : View;
+
   return (
-    <View style={[s.wrapper, { width: size + 28 }]}>
+    <Container
+      style={[s.wrapper, { width: (width ?? size + 28) as any }]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
       <View style={{ width: size, height: size }}>
         <BadgeFrame tier={tier} category={category} locked={locked} size={size} />
 
@@ -106,7 +118,7 @@ export default function Badge({
           </Text>
         </>
       )}
-    </View>
+    </Container>
   );
 }
 
