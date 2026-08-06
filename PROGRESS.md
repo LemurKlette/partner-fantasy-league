@@ -482,3 +482,34 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
   Ranking-Zeile verwendet. Badges ohne Kategorie hätten damit Grau bekommen, während
   `BadgeFrame` sie laut Design-Konzept ockerfarben zeichnet. Neue Funktion `badgeColors()`
   mit Ocker-Rückfall trennt die beiden Fälle sauber
+
+## Schritt 2 – Partner erscheinen im Ranking erst mit Punkten
+Hinweis zur Benennung: Die im Auftrag genannten Tabellen `partner_group_links` und
+`group_custom_categories` existieren nicht. Die reale Entsprechung ist
+`group_partner_memberships`; eigene Kategorien sind Zeilen in `point_categories` mit
+`is_global = false`.
+
+- **(a) Auto-Anlage entfernt:** `openGroup` legte beim Öffnen einer Gruppe für alle Partner
+  der Nutzerin eine Zugehörigkeit an — eine frisch erstellte Gruppe zeigte deshalb sofort
+  alle Partner mit 0 Punkten. Diese Stelle ist raus. Migration 29 räumt zusätzlich die
+  Altbestände auf, die der Backfill aus Migration 15 angelegt hatte
+- **(b/c) Atomar über RPCs:** `add_point_entry()` legt die Zugehörigkeit bei Bedarf mit an,
+  `delete_point_entry()` entfernt sie, wenn die Punktsumme in der Gruppe auf 0 fällt. Beide
+  laufen bewusst als SECURITY INVOKER, damit die bestehenden RLS-Policies weiter greifen und
+  die Berechtigungsprüfung nicht dupliziert werden muss
+- **(d) Ranking** wird jetzt von der Zugehörigkeit getrieben statt von der Gruppenmitgliedschaft
+  der Nutzerin, und zeigt zusätzlich den Avatar
+- **(e) Mitgliederliste** und die Avatare auf den Gruppenkarten folgen derselben Quelle
+- **(f) Die Partner-Auswahl beim Punktevergeben zeigt weiterhin alle eigenen Partner** —
+  sonst käme nie einer erstmals in eine Gruppe
+- **RLS:** `group_partner_memberships` hatte nur select/insert/update. Für (c) war eine
+  DELETE-Policy nötig, sie erlaubt das Entfernen nur für eigene Partner
+- Migration: `supabase/migrations/20260804_29_membership_follows_points.sql`
+
+### Offene Frage: der manuelle Aktiv-Schalter
+Der Schalter „Aktivieren/Deaktivieren" unter „Meine Partner in dieser Gruppe" stammt aus dem
+alten Modell und regelt nun dasselbe Ergebnis wie die automatische Zugehörigkeit — ein
+Partner kann also auf zwei Wegen aus dem Ranking verschwinden. Ich habe ihn bewusst nicht
+entfernt (er funktioniert weiter als manuelles Ausblenden), die Liste zeigt jetzt aber nur
+noch Partner, die tatsächlich in der Gruppe sind. Ob der Schalter bleiben soll, ist eine
+Produktentscheidung.

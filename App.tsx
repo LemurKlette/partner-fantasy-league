@@ -27,7 +27,7 @@ type Group = { id: string; name: string; invite_code: string; created_by: string
 type GroupMember = { user_id: string; partner: Partner | null };
 type GroupPartnerPreview = { id: string; name: string; avatar_url: string | null };
 type Category = { id: string; name: string; points: number; icon_key: string | null; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
-type RankingEntry = { partner_id: string; name: string; total: number };
+type RankingEntry = { partner_id: string; name: string; avatar_url: string | null; total: number };
 type EarnedBadge = { partner_id: string; icon_key: string | null; name: string; category_filter: string | null };
 type ManConnection = { id: string; invite_code: string; connected_at: string | null; partners: { id: string; name: string; avatar_url: string | null } };
 type PartnerWithCode = { id: string; name: string; invite_code: string; avatar_url: string | null };
@@ -284,48 +284,70 @@ export default function App() {
 
   async function loadGroupAvatarPreviews(groupIds: string[]) {
     if (groupIds.length === 0) { setGroupAvatarsMap({}); return; }
-    const [{ data: memberRows, error: e1 }, { data: memberships, error: e2 }] = await Promise.all([
-      supabase.from('group_members').select('group_id, user_id').in('group_id', groupIds),
-      supabase.from('group_partner_memberships').select('group_id, partner_id, active').in('group_id', groupIds),
-    ]);
-    if (failed('Gruppenbilder konnten nicht geladen werden', e1 ?? e2)) return;
-    const userIds = Array.from(new Set((memberRows ?? []).map((m: any) => m.user_id)));
-    const { data: partnerRows, error: e3 } = await supabase.from('partners').select('id, name, avatar_url, owner_user_id').in('owner_user_id', userIds);
-    if (failed('Gruppenbilder konnten nicht geladen werden', e3)) return;
-    const activeMap = new Map<string, boolean>();
-    (memberships ?? []).forEach((m: any) => activeMap.set(`${m.group_id}:${m.partner_id}`, m.active));
+    // Ebenfalls von der Zugehoerigkeit getrieben: auf der Gruppenkarte
+    // erscheinen nur Partner, die auch im Ranking stehen.
+    const { data: memberships, error: e1 } = await supabase.from('group_partner_memberships')
+      .select('group_id, partner_id').in('group_id', groupIds).eq('active', true);
+    if (failed('Gruppenbilder konnten nicht geladen werden', e1)) return;
+    const rows = (memberships ?? []) as any[];
+    const partnerIds = Array.from(new Set(rows.map(m => m.partner_id)));
+    if (partnerIds.length === 0) { setGroupAvatarsMap({}); return; }
+
+    const { data: partnerRows, error: e2 } = await supabase.from('partners')
+      .select('id, name, avatar_url').in('id', partnerIds);
+    if (failed('Gruppenbilder konnten nicht geladen werden', e2)) return;
+    const byId = new Map<string, any>(((partnerRows ?? []) as any[]).map(p => [p.id, p]));
 
     const map: Record<string, GroupPartnerPreview[]> = {};
-    (memberRows ?? []).forEach((m: any) => {
-      ((partnerRows ?? []) as any[])
-        .filter(p => p.owner_user_id === m.user_id)
-        .forEach(p => {
-          if ((activeMap.get(`${m.group_id}:${p.id}`) ?? true) === false) return;
-          (map[m.group_id] ??= []).push({ id: p.id, name: p.name, avatar_url: p.avatar_url });
-        });
+    rows.forEach(m => {
+      const p = byId.get(m.partner_id);
+      if (!p) return;
+      (map[m.group_id] ??= []).push({ id: p.id, name: p.name, avatar_url: p.avatar_url });
     });
     setGroupAvatarsMap(map);
   }
 
+  // Die Zugehoerigkeit aendert sich bei jeder Punktevergabe und jedem
+  // Loeschen -- Mitgliederliste und Toggle-Liste muessen danach nachziehen.
+  async function refreshGroupMemberships(groupId: string) {
+    const { data: memberships, error } = await supabase.from('group_partner_memberships')
+      .select('partner_id, active').eq('group_id', groupId);
+    if (failed('Gruppenzugehörigkeit konnte nicht geladen werden', error)) return;
+    const memberList = (memberships ?? []) as any[];
+    setGroupPartnerMemberships(memberList.map(m => ({ partner_id: m.partner_id, active: m.active })));
+
+    const memberIds = memberList.map(m => m.partner_id);
+    if (memberIds.length === 0) { setGroupMembers([]); return; }
+    const { data: partnerRows, error: e2 } = await supabase.from('partners')
+      .select('id, name, avatar_url, owner_user_id').in('id', memberIds);
+    if (failed('Gruppenzugehörigkeit konnte nicht geladen werden', e2)) return;
+    setGroupMembers(((partnerRows ?? []) as any[]).map(p => ({
+      user_id: p.owner_user_id,
+      partner: { id: p.id, name: p.name, avatar_url: p.avatar_url },
+    })));
+  }
+
   async function loadRankingForGroup(groupId: string, p: Period) {
     setRankingLoading(true);
-    const { data: memberRows, error: e1 } = await supabase.from('group_members').select('user_id').eq('group_id', groupId);
+    // Die Mitgliedschaft entscheidet, wer im Ranking steht -- nicht mehr die
+    // Gruppenmitgliedschaft der Nutzerin. Wer keine Punkte hat, hat auch
+    // keinen Eintrag und taucht damit gar nicht erst auf.
+    const { data: memberships, error: e1 } = await supabase.from('group_partner_memberships')
+      .select('partner_id').eq('group_id', groupId).eq('active', true);
     if (failed('Ranking konnte nicht geladen werden', e1)) { setRankingLoading(false); return; }
-    const userIds = (memberRows ?? []).map((m: any) => m.user_id);
-    const [{ data: partnerRows, error: e2 }, { data: memberships, error: e3 }, { data: entries, error: e4 }] = await Promise.all([
-      supabase.from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds),
-      supabase.from('group_partner_memberships')
-        .select('partner_id, active').eq('group_id', groupId).eq('active', true),
+    const partnerIds = (memberships ?? []).map((m: any) => m.partner_id);
+    if (partnerIds.length === 0) { setRanking([]); setRankingLoading(false); return; }
+
+    const [{ data: partnerRows, error: e2 }, { data: entries, error: e3 }] = await Promise.all([
+      supabase.from('partners').select('id, name, avatar_url').in('id', partnerIds),
       supabase.from('point_entries').select('partner_id, points')
         .eq('group_id', groupId).gte('created_at', getStartDate(p)),
     ]);
-    if (failed('Ranking konnte nicht geladen werden', e2 ?? e3 ?? e4)) { setRankingLoading(false); return; }
-    const activeIds = new Set((memberships ?? []).map((m: any) => m.partner_id));
-    const activePartners = ((partnerRows ?? []) as any[]).filter(pr => activeIds.has(pr.id));
+    if (failed('Ranking konnte nicht geladen werden', e2 ?? e3)) { setRankingLoading(false); return; }
     const totals: Record<string, number> = {};
     (entries ?? []).forEach((e: any) => { totals[e.partner_id] = (totals[e.partner_id] || 0) + e.points; });
-    setRanking(activePartners
-      .map(pr => ({ partner_id: pr.id, name: pr.name, total: totals[pr.id] || 0 }))
+    setRanking(((partnerRows ?? []) as any[])
+      .map(pr => ({ partner_id: pr.id, name: pr.name, avatar_url: pr.avatar_url, total: totals[pr.id] || 0 }))
       .sort((a, b) => b.total - a.total));
     setRankingLoading(false);
   }
@@ -486,46 +508,41 @@ export default function App() {
     setSelectedGroup(group);
     setMembersExpanded(false);
     setLoading(true);
-    const { data: memberRows, error: e1 } = await supabase.from('group_members').select('user_id').eq('group_id', group.id);
-    if (failed('Gruppe konnte nicht geladen werden', e1)) { setLoading(false); return; }
-    const userIds = (memberRows ?? []).map((m: any) => m.user_id);
-
-    const [{ data: partnerRows, error: e2 }, { data: myPts, error: e3 }, { data: memberships, error: e4 }] = await Promise.all([
-      // avatar_url muss mitgeladen werden, sonst zeigen Mitgliederliste und
-      // Partner-Auswahl immer nur die Initialen statt des Fotos.
-      supabase.from('partners').select('id, name, avatar_url, owner_user_id').in('owner_user_id', userIds),
-      // Meine eigenen Partner (alle, nicht nur den ersten)
+    // Wer in der Gruppe steht, ergibt sich allein aus group_partner_memberships.
+    // Dieser Eintrag entsteht bei der ersten Punktevergabe -- hier wird bewusst
+    // nichts mehr automatisch angelegt, sonst stuenden in einer frisch
+    // erstellten Gruppe sofort alle Partner mit 0 Punkten im Ranking.
+    const [{ data: myPts, error: e1 }, { data: memberships, error: e2 }] = await Promise.all([
+      // Alle eigenen Partner -- die Auswahl beim Punktevergeben zeigt auch die,
+      // die noch nicht in der Gruppe sind (sonst kaeme nie einer hinein).
       supabase.from('partners').select('id, name, avatar_url')
         .eq('owner_user_id', session!.user.id).order('created_at'),
       supabase.from('group_partner_memberships')
         .select('partner_id, active').eq('group_id', group.id),
     ]);
-    if (failed('Gruppe konnte nicht geladen werden', e2 ?? e3 ?? e4)) { setLoading(false); return; }
+    if (failed('Gruppe konnte nicht geladen werden', e1 ?? e2)) { setLoading(false); return; }
 
     const myPtsList = (myPts ?? []) as Partner[];
     setMyAllPartners(myPtsList);
 
-    const membershipMap = new Map<string, boolean>((memberships ?? []).map((m: any) => [m.partner_id, m.active as boolean]));
+    const memberList = (memberships ?? []) as any[];
+    setGroupPartnerMemberships(memberList.map(m => ({ partner_id: m.partner_id, active: m.active })));
 
-    // Neue Partner automatisch registrieren (die noch keinen Eintrag haben)
-    const unregistered = myPtsList.map(p => p.id).filter(id => !membershipMap.has(id));
-    if (unregistered.length > 0) {
-      const { error: insertErr } = await supabase.from('group_partner_memberships')
-        .insert(unregistered.map(pid => ({ group_id: group.id, partner_id: pid, active: true })));
-      if (failed('Partner konnte der Gruppe nicht hinzugefügt werden', insertErr)) { setLoading(false); return; }
-      unregistered.forEach(pid => membershipMap.set(pid, true));
+    setSelectedPartnerIdForPoints(myPtsList[0]?.id ?? null);
+
+    // Mitgliederliste zeigt die Partner, die tatsaechlich in der Gruppe sind.
+    const memberIds = memberList.map(m => m.partner_id);
+    if (memberIds.length === 0) {
+      setGroupMembers([]);
+    } else {
+      const { data: partnerRows, error: e3 } = await supabase.from('partners')
+        .select('id, name, avatar_url, owner_user_id').in('id', memberIds);
+      if (failed('Gruppe konnte nicht geladen werden', e3)) { setLoading(false); return; }
+      setGroupMembers(((partnerRows ?? []) as any[]).map(p => ({
+        user_id: p.owner_user_id,
+        partner: { id: p.id, name: p.name, avatar_url: p.avatar_url },
+      })));
     }
-
-    setGroupPartnerMemberships(Array.from(membershipMap.entries()).map(([partner_id, active]) => ({ partner_id, active })));
-
-    // Ersten aktiven Partner vorauswählen
-    const firstActive = myPtsList.find(p => membershipMap.get(p.id) !== false);
-    setSelectedPartnerIdForPoints(firstActive?.id ?? myPtsList[0]?.id ?? null);
-
-    setGroupMembers(userIds.map(uid => ({
-      user_id: uid,
-      partner: (partnerRows ?? []).find((p: any) => p.owner_user_id === uid) ?? null,
-    })));
     setPeriod('week');
     await Promise.all([loadRankingForGroup(group.id, 'week'), loadActivityLog(group.id), loadEarnedBadges(group.id)]);
     setScreen('group-detail');
@@ -608,11 +625,14 @@ export default function App() {
     Alert.alert('Eintrag löschen', 'Diesen Punkt-Eintrag wirklich löschen? Das kann nicht rückgängig gemacht werden.', [
       { text: 'Abbrechen', style: 'cancel' },
       { text: 'Löschen', style: 'destructive', onPress: async () => {
-        const { error } = await supabase.from('point_entries').delete().eq('id', entryId);
+        // Ueber die RPC: sie entfernt den Partner atomar aus der Gruppe,
+        // sobald seine Punktsumme dort auf 0 faellt.
+        const { error } = await supabase.rpc('delete_point_entry', { p_entry_id: entryId });
         if (error) Alert.alert('Fehler', error.message);
         else await Promise.all([
           loadRankingForGroup(selectedGroup!.id, period),
           loadActivityLog(selectedGroup!.id),
+          refreshGroupMemberships(selectedGroup!.id),
         ]);
       }},
     ]);
@@ -776,19 +796,30 @@ export default function App() {
     const applyMultiplier = withoutRequest && selectedCategory.multiplier_eligible;
     const requestedPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
     setLoading(true);
-    const { data, error } = await supabase.from('point_entries').insert({
-      partner_id: effectivePartnerId, group_id: selectedGroup!.id,
-      category_id: selectedCategory.id, points: requestedPoints,
-      without_request: applyMultiplier,
-      note: note.trim() || null, created_by: session!.user.id,
-    }).select('points, capped_reason').single();
+    // Ueber die RPC statt direktem Insert: sie legt bei Bedarf die
+    // Gruppenzugehoerigkeit des Partners mit an, und zwar atomar -- sonst
+    // koennte ein verwaister Eintrag ohne Zugehoerigkeit entstehen.
+    const { data: rows, error } = await supabase.rpc('add_point_entry', {
+      p_partner_id: effectivePartnerId,
+      p_group_id: selectedGroup!.id,
+      p_category_id: selectedCategory.id,
+      p_points: requestedPoints,
+      p_note: note.trim() || null,
+      p_without_request: applyMultiplier,
+    });
+    const result = ((rows ?? []) as any[])[0];
     if (error) Alert.alert('Fehler', error.message);
     else {
       setSelectedCategory(null);
       setNote('');
       setWithoutRequest(false);
-      await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
+      await Promise.all([
+        loadRankingForGroup(selectedGroup!.id, period),
+        loadActivityLog(selectedGroup!.id),
+        refreshGroupMemberships(selectedGroup!.id),
+      ]);
       await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
+      const data = { points: result?.awarded_points, capped_reason: result?.cap_reason };
       const awarded = data?.points ?? requestedPoints;
       if (data?.capped_reason === 'daily_limit') {
         Alert.alert(
@@ -1211,12 +1242,13 @@ export default function App() {
                     const leaderLabel = period === 'week' ? 'Spieler der Woche' : period === 'month' ? 'Monatssieger' : `Saisonsieger ${new Date().getFullYear()}`;
                     const isLeader = index === 0 && item.total > 0;
                     return (
-                      <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
-                        <View style={{ width: 32, alignItems: 'center' }}>
+                      <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+                        <View style={{ width: 26, alignItems: 'center' }}>
                           {isLeader
                             ? <MaterialCommunityIcons name={ICONS.rankFirst as any} size={ICON_SIZE.list} color={COLORS.gold} />
                             : <Text style={{ fontSize: 18, fontWeight: '600', color: COLORS.inkMuted }}>{index + 1}.</Text>}
                         </View>
+                        <Avatar uri={item.avatar_url} name={item.name} size={40} />
                         <View style={{ flex: 1 }}>
                           <Text style={s.cardTitle}>{item.name}</Text>
                           {isLeader && (
@@ -1282,10 +1314,12 @@ export default function App() {
               })
             }
 
-            {myAllPartners.length > 0 && (
+            {/* Nur eigene Partner, die tatsaechlich in dieser Gruppe stehen --
+                also solche, fuer die hier schon Punkte vergeben wurden. */}
+            {myAllPartners.some(mp => groupPartnerMemberships.some(m => m.partner_id === mp.id)) && (
               <>
                 <Text style={s.sectionLabel}>Meine Partner in dieser Gruppe</Text>
-                {myAllPartners.map(mp => {
+                {myAllPartners.filter(mp => groupPartnerMemberships.some(m => m.partner_id === mp.id)).map(mp => {
                   const membership = groupPartnerMemberships.find(m => m.partner_id === mp.id);
                   const isActive = membership?.active ?? true;
                   return (
@@ -1343,7 +1377,9 @@ export default function App() {
   );
 
   if (screen === 'add-points') {
-    const activePartners = myAllPartners.filter(mp => groupPartnerMemberships.find(m => m.partner_id === mp.id)?.active !== false);
+    // Bewusst ALLE eigenen Partner, auch die noch nicht in der Gruppe sind --
+    // sonst koennte nie einer erstmals hinzukommen.
+    const activePartners = myAllPartners;
     const pointsPartnerName = activePartners.find(p => p.id === selectedPartnerIdForPoints)?.name ?? partner?.name ?? '';
     return (
     <View style={s.screen}>
@@ -1646,7 +1682,7 @@ export default function App() {
 
         {helpTab === 'faq' && <>
           {[
-            { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Entweder wurden noch keine Punkte für ihn vergeben, oder er ist für diese Gruppe deaktiviert (siehe "Meine Partner in dieser Gruppe" im Gruppen-Detail).' },
+            { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Ein Partner erscheint in einer Gruppe erst, sobald dort Punkte für ihn vergeben wurden — eine neue Gruppe startet also leer. Fallen seine Punkte in dieser Gruppe wieder auf 0, verschwindet er, bis du ihm erneut Punkte gibst.' },
             { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Ja — im Aktivitäts-Log deiner Gruppe kannst du eigene Einträge über das kleine Kreuz löschen.' },
             { q: 'Sieht mein Partner die Punkte?', a: 'Er sieht seine Badges und seinen Fortschritt über sein eigenes Profil, aber nicht das direkte Ranking oder die Gruppen-Ansicht — die bleibt euch Frauen vorbehalten.' },
             { q: 'Warum bekomme ich manchmal 0 oder weniger Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute schon eingetragen (beim 2. Mal gibt es die Hälfte, ab dem 3. Mal nichts), oder das Tageslimit von 80 Punkten ist erreicht. Der jeweilige Grund steht im Aktivitäts-Log.' },
