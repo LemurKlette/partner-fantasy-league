@@ -360,3 +360,17 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
   und Icon sichtbar — das Versprechen des Dialogs stimmt damit jetzt
 - Die RPC prüft serverseitig Gruppenzugehörigkeit und lehnt Standard-Aufgaben ab
 - Migration: `supabase/migrations/20260804_27_archive_custom_categories.sql`
+
+## Fix: leere Kategorieauswahl nach Migration 27 (2026-08-06)
+- Symptom: „Punkte vergeben" und „Eigene Kategorie" führten auf eine komplett leere Seite
+- Ursache: Der Code filtert seit Migration 27 auf `archived_at`. Solange die Spalte in der
+  Datenbank fehlte, lieferte PostgREST einen Fehler statt Daten — und `loadCategories`
+  ignorierte den Fehler stillschweigend, sodass eine leere Liste gerendert wurde
+- Eigentlicher Defekt war also nicht der Filter, sondern die fehlende Fehlerbehandlung:
+  `loadCategories` und `loadManageCategories` melden Abfragefehler jetzt per Alert, und
+  „Punkte vergeben" leitet gar nicht erst weiter, wenn das Laden fehlschlägt
+- Zusätzlich: Nach dem Anlegen einer eigenen Kategorie geht es zurück ins Gruppen-Detail
+  (mit Bestätigung) statt in die Kategorieauswahl; der Zurück-Button dort ebenso
+- **Offen:** rund 15 weitere Loader (`openGroup`, `loadRankingForGroup`, `loadGroups`,
+  `loadProfileData` …) verschlucken Abfragefehler auf dieselbe Weise und würden bei einem
+  Problem ebenfalls nur leere Listen zeigen
