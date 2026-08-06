@@ -516,22 +516,33 @@ export default function App() {
   // Punktwerte der Standard-Aufgaben sind fest an ihre Aufwandsstufe
   // gebunden und lassen sich nicht mehr pro Gruppe ueberschreiben --
   // nur so bleiben Gruppen untereinander vergleichbar.
-  async function loadCategories() {
-    const { data: cats } = await supabase.from('point_categories')
+  async function loadCategories(): Promise<boolean> {
+    const { data: cats, error } = await supabase.from('point_categories')
       .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
       .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
       .is('archived_at', null)
       .order('name');
+    if (error) {
+      // Ohne diese Meldung endete ein Abfragefehler in einer leeren
+      // Auswahlliste, ohne jeden Hinweis auf die Ursache.
+      Alert.alert('Kategorien konnten nicht geladen werden', error.message);
+      return false;
+    }
     setCategories((cats ?? []) as Category[]);
+    return true;
   }
 
   async function loadManageCategories() {
     setLoading(true);
-    const { data: customCats } = await supabase.from('point_categories')
+    const { data: customCats, error } = await supabase.from('point_categories')
       .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
       .eq('group_id', selectedGroup!.id).is('archived_at', null).order('name');
-    setGroupCustomCats((customCats ?? []) as Category[]);
     setLoading(false);
+    if (error) {
+      Alert.alert('Kategorien konnten nicht geladen werden', error.message);
+      return;
+    }
+    setGroupCustomCats((customCats ?? []) as Category[]);
     setScreen('manage-categories');
   }
 
@@ -579,9 +590,12 @@ export default function App() {
     });
     if (error) Alert.alert('Fehler', error.message);
     else {
+      const created = newCatName.trim();
       setNewCatName(''); setNewCatTier(null); setNewCatIconKey('helpCustomCategory');
-      await loadCategories();
-      setScreen('add-points');
+      // Zurueck zur Gruppe statt in die Kategorieauswahl -- die neue
+      // Aufgabe steht beim naechsten "Punkte vergeben" bereit.
+      setScreen('group-detail');
+      Alert.alert('Kategorie angelegt', `"${created}" steht ab sofort für eure Gruppe bereit.`);
     }
     setLoading(false);
   }
@@ -1237,11 +1251,11 @@ export default function App() {
           </ScrollView>
       }
       <View style={s.footer}>
-        <TouchableOpacity style={[s.btn, s.iconRow, { justifyContent: 'center' }]} onPress={async () => { await loadCategories(); setScreen('add-points'); }}>
+        <TouchableOpacity style={[s.btn, s.iconRow, { justifyContent: 'center' }]} onPress={async () => { if (await loadCategories()) setScreen('add-points'); }}>
           <MaterialCommunityIcons name={ICONS.actionAddPoints as any} size={ICON_SIZE.inline} color={COLORS.onTerracotta} />
           <Text style={s.btnText}>Punkte vergeben</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={async () => { await loadCategories(); setScreen('create-category'); }}>
+        <TouchableOpacity style={[s.btn, s.btnOutline, s.iconRow, { justifyContent: 'center' }]} onPress={async () => setScreen('create-category')}>
           <MaterialCommunityIcons name={ICONS.helpCustomCategory as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
           <Text style={s.btnOutlineText}>Eigene Kategorie</Text>
         </TouchableOpacity>
@@ -1415,12 +1429,12 @@ export default function App() {
   if (screen === 'create-category') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity style={s.backRow} onPress={() => setScreen('add-points')}>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen('group-detail')}>
           <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
           <Text style={s.back}>Zurück</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>Eigene Kategorie</Text>
-        <Text style={s.headerSub}>Erstelle eine persönliche Punktekategorie</Text>
+        <Text style={s.headerSub}>Neue Aufgabe für eure Gruppe</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
         <Text style={s.sectionLabel}>Name</Text>
