@@ -441,3 +441,15 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
   Konsistenz, Saisontitel) behalten wie im Design-Konzept festgelegt den Ocker-Kreis
 - Ebenfalls unverändert: die Icon-Auswahl beim Anlegen nutzt weiter Terrakotta, das ist dort
   ein Auswahlzustand und keine Kategorie-Kennzeichnung
+
+## Schritt 4 – „Ohne Aufforderung" sichtbarer gemacht
+- Der Toggle existierte bereits samt ×1,5-Logik und der Spalte
+  `point_entries.without_request` — er wird nur angezeigt, wenn die gewählte Aufgabe zu
+  Haushalt oder Mental Load gehört (`multiplier_eligible`), wie im Konzept festgelegt
+- Der Blitz im Toggle leuchtet jetzt in `COLORS.gold` statt Terrakotta, damit der Bonus
+  optisch heraussticht
+- Neu: Einträge mit Bonus tragen im Aktivitätslog ein kleines Blitz-Icon und den Hinweis
+  „ohne Aufforderung" in Gold
+- Die Spalte heißt weiterhin `without_request` (nicht `is_unprompted`): sie wird bereits von
+  der Badge-Logik für „Der Hellseher" ausgewertet, eine Umbenennung hätte nur Risiko ohne
+  Gewinn gebracht

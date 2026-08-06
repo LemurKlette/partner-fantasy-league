@@ -34,6 +34,7 @@ type PartnerWithCode = { id: string; name: string; invite_code: string; avatar_u
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null; created_by: string;
   capped_reason: string | null;
+  without_request: boolean;
   partners: { name: string };
   point_categories: { name: string; icon_key: string | null; category_tag: string | null };
 };
@@ -465,7 +466,7 @@ export default function App() {
 
   async function loadActivityLog(groupId: string) {
     const { data, error } = await supabase.from('point_entries')
-      .select('id, points, created_at, note, created_by, capped_reason, partners(name), point_categories(name, icon_key, category_tag)')
+      .select('id, points, created_at, note, created_by, capped_reason, without_request, partners(name), point_categories(name, icon_key, category_tag)')
       .eq('group_id', groupId).order('created_at', { ascending: false }).limit(10);
     if (failed('Aktivitäten konnten nicht geladen werden', error)) return;
     // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
@@ -1250,6 +1251,12 @@ export default function App() {
                         </TouchableOpacity>
                       )}
                     </View>
+                    {entry.without_request && (
+                      <View style={[s.iconRow, { gap: 4, marginTop: 4 }]}>
+                        <MaterialCommunityIcons name={ICONS.toggleUnprompted as any} size={14} color={COLORS.gold} />
+                        <Text style={{ fontSize: 12, color: COLORS.gold, fontWeight: '600' }}>ohne Aufforderung</Text>
+                      </View>
+                    )}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                       <Text style={[s.cardSub, { flex: 1, marginRight: 8 }]}>{entry.note ? `„${entry.note}"` : ''}</Text>
                       <Text style={[s.pts, { fontSize: 13 }, entry.points === 0 && { color: COLORS.inkMuted }]}>
@@ -1417,8 +1424,9 @@ export default function App() {
               borderColor: withoutRequest ? COLORS.terracotta : COLORS.sandDeep, borderRadius: 10, padding: 14, marginTop: 8 }}
             onPress={() => setWithoutRequest(!withoutRequest)}>
             <View style={[s.iconRow, { flex: 1, marginRight: 8 }]}>
+              {/* Blitz in Gold, damit der Bonus optisch heraussticht. */}
               <MaterialCommunityIcons name={ICONS.toggleUnprompted as any} size={ICON_SIZE.list}
-                color={withoutRequest ? COLORS.terracotta : COLORS.inkMuted} />
+                color={withoutRequest ? COLORS.gold : COLORS.inkMuted} />
               <View style={{ flex: 1 }}>
                 <Text style={s.cardTitle}>Ohne Aufforderung</Text>
                 <Text style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>×1,5 Punkte, wenn er von selbst dran gedacht hat</Text>
