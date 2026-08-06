@@ -42,19 +42,22 @@ export default function BadgeGrid({
 
   async function load() {
     setLoading(true);
-    const [{ data: allBadges }, { data: earnedRows }, { data: entries }] = await Promise.all([
+    // Punktesummen kommen ueber eine RPC statt direkt aus point_entries:
+    // Maenner sind nicht in group_members und duerfen die Tabelle deshalb
+    // nicht lesen -- ausserdem bleiben so die Notizen der Frauen privat.
+    const [{ data: allBadges }, { data: earnedRows }, { data: totals }] = await Promise.all([
       supabase.from('badges')
         .select('id, name, icon_key, image_url, badge_type, tier, trigger_type, trigger_value, category_filter, is_hidden')
         .order('sort_order'),
       supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId),
-      supabase.from('point_entries').select('points, point_categories(category_tag)').eq('partner_id', partnerId),
+      supabase.rpc('partner_point_totals', { p_partner_id: partnerId }),
     ]);
 
-    const totalPoints = (entries ?? []).reduce((sum: number, e: any) => sum + e.points, 0);
     const catTotals: Record<string, number> = {};
-    (entries ?? []).forEach((e: any) => {
-      const tag = (e.point_categories as any)?.category_tag;
-      if (tag) catTotals[tag] = (catTotals[tag] || 0) + e.points;
+    let totalPoints = 0;
+    ((totals ?? []) as any[]).forEach(r => {
+      totalPoints += r.total;
+      if (r.category_tag) catTotals[r.category_tag] = (catTotals[r.category_tag] || 0) + r.total;
     });
     const countByBadge: Record<string, number> = {};
     (earnedRows ?? []).forEach((r: any) => { countByBadge[r.badge_id] = (countByBadge[r.badge_id] || 0) + 1; });

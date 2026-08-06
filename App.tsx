@@ -156,7 +156,7 @@ export default function App() {
   const [showAddPartnerForm, setShowAddPartnerForm] = useState(false);
   const [newPartnerNameForProfile, setNewPartnerNameForProfile] = useState('');
   const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
-  const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
+  const [overrideInputs, setOverrideInputs] = useState<Record<string, number>>({});
   const [period, setPeriod] = useState<Period>('week');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -525,9 +525,9 @@ export default function App() {
       supabase.from('point_categories').select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag').eq('group_id', selectedGroup!.id).order('name'),
       supabase.from('group_category_overrides').select('category_id, points').eq('group_id', selectedGroup!.id),
     ]);
-    const overrideMap: Record<string, string> = {};
-    (overrides ?? []).forEach((o: any) => { overrideMap[o.category_id] = String(o.points); });
-    (globalCats ?? []).forEach((c: any) => { if (!overrideMap[c.id]) overrideMap[c.id] = String(c.points); });
+    const overrideMap: Record<string, number> = {};
+    (overrides ?? []).forEach((o: any) => { overrideMap[o.category_id] = o.points; });
+    (globalCats ?? []).forEach((c: any) => { if (overrideMap[c.id] === undefined) overrideMap[c.id] = c.points; });
     setCategories((globalCats ?? []) as Category[]);
     setGroupCustomCats((customCats ?? []) as Category[]);
     setOverrideInputs(overrideMap);
@@ -537,18 +537,26 @@ export default function App() {
 
   async function handleSaveOverrides() {
     setLoading(true);
-    const rows = categories.map(c => ({
-      group_id: selectedGroup!.id,
-      category_id: c.id,
-      points: parseInt(overrideInputs[c.id] ?? String(c.points), 10) || c.points,
-    }));
-    const { error } = await supabase.from('group_category_overrides')
-      .upsert(rows, { onConflict: 'group_id,category_id' });
-    if (error) Alert.alert('Fehler', error.message);
-    else {
-      Alert.alert('Gespeichert!', 'Punktwerte für diese Gruppe wurden angepasst.');
-      setScreen('group-detail');
+    // Nur tatsaechlich abweichende Werte speichern; Kategorien, die wieder
+    // auf ihrem Standardwert stehen, bekommen ihren Override entfernt.
+    const changed = categories.filter(c => (overrideInputs[c.id] ?? c.points) !== c.points);
+    const reset = categories.filter(c => (overrideInputs[c.id] ?? c.points) === c.points);
+
+    if (changed.length > 0) {
+      const { error } = await supabase.from('group_category_overrides')
+        .upsert(
+          changed.map(c => ({ group_id: selectedGroup!.id, category_id: c.id, points: overrideInputs[c.id] })),
+          { onConflict: 'group_id,category_id' },
+        );
+      if (error) { Alert.alert('Fehler', error.message); setLoading(false); return; }
     }
+    if (reset.length > 0) {
+      const { error } = await supabase.from('group_category_overrides')
+        .delete().eq('group_id', selectedGroup!.id).in('category_id', reset.map(c => c.id));
+      if (error) { Alert.alert('Fehler', error.message); setLoading(false); return; }
+    }
+    Alert.alert('Gespeichert!', 'Punktwerte für diese Gruppe wurden angepasst.');
+    setScreen('group-detail');
     setLoading(false);
   }
 
@@ -777,13 +785,22 @@ export default function App() {
     const rendered = await context.renderAsync();
     const resized = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.7, base64: true });
     if (!resized.base64) { Alert.alert('Fehler', 'Bild konnte nicht verarbeitet werden.'); setLoading(false); return; }
-    const path = `${partnerId}/${Date.now()}.jpg`;
+    const fileName = `${Date.now()}.jpg`;
+    const path = `${partnerId}/${fileName}`;
     const { error: uploadErr } = await supabase.storage.from('avatars')
       .upload(path, decode(resized.base64), { contentType: 'image/jpeg', upsert: true });
     if (uploadErr) { Alert.alert('Fehler beim Hochladen', uploadErr.message); setLoading(false); return; }
     const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
     const { error: updateErr } = await supabase.from('partners').update({ avatar_url: pub.publicUrl }).eq('id', partnerId);
     if (updateErr) { Alert.alert('Fehler', updateErr.message); setLoading(false); return; }
+
+    // Erst nach erfolgreichem Update aufraeumen, damit nie die gerade
+    // referenzierte Datei geloescht wird. Ohne das bleibt bei jedem
+    // Fotowechsel das alte Bild dauerhaft im Bucket liegen.
+    const { data: existing } = await supabase.storage.from('avatars').list(partnerId);
+    const stale = (existing ?? []).filter(f => f.name !== fileName).map(f => `${partnerId}/${f.name}`);
+    if (stale.length > 0) await supabase.storage.from('avatars').remove(stale);
+
     setMyPartners(prev => prev.map(p => p.id === partnerId ? { ...p, avatar_url: pub.publicUrl } : p));
     if (partner?.id === partnerId) setPartner(prev => prev ? { ...prev, avatar_url: pub.publicUrl } : prev);
     setLoading(false);
@@ -1320,20 +1337,41 @@ export default function App() {
       {loading
         ? <View style={s.center}><ActivityIndicator color={COLORS.terracotta} /></View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 130 }}>
-            <Text style={s.sectionLabel}>Standard-Kategorien · Punkte anpassen</Text>
-            {categories.map(cat => (
-              <View key={cat.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} size={ICON_SIZE.inline} circle={32} />
-                <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
-                <Text style={{ fontSize: 11, color: COLORS.inkMuted }}>Std:{cat.points}</Text>
-                <TextInput
-                  style={{ borderWidth: 1, borderColor: COLORS.sandDeep, borderRadius: 6, padding: 6, width: 54, textAlign: 'center', fontSize: 15, backgroundColor: COLORS.surface, color: COLORS.ink }}
-                  value={overrideInputs[cat.id] ?? String(cat.points)}
-                  onChangeText={v => setOverrideInputs(prev => ({ ...prev, [cat.id]: v }))}
-                  keyboardType="numeric"
-                />
-              </View>
-            ))}
+            <Text style={s.sectionLabel}>Standard-Kategorien · Aufwandsstufe anpassen</Text>
+            <Text style={{ fontSize: 12, color: COLORS.inkMuted, marginBottom: 2 }}>
+              Auch angepasste Werte bleiben im Tier-System (2 / 5 / 10 / 20 / 40), damit
+              Gruppen vergleichbar bleiben.
+            </Text>
+            {categories.map(cat => {
+              const current = overrideInputs[cat.id] ?? cat.points;
+              return (
+                <View key={cat.id} style={[s.card, { gap: 10 }]}>
+                  <View style={[s.iconRow, { gap: 10 }]}>
+                    <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} size={ICON_SIZE.inline} circle={32} />
+                    <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
+                    {current !== cat.points && (
+                      <Text style={{ fontSize: 11, color: COLORS.inkMuted }}>Standard: {cat.points}</Text>
+                    )}
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {TIERS.map(t => {
+                      const sel = current === t.points;
+                      return (
+                        <TouchableOpacity key={t.tier}
+                          style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                            borderWidth: sel ? 2 : 1,
+                            borderColor: sel ? COLORS.terracotta : COLORS.sandDeep,
+                            backgroundColor: COLORS.surface }}
+                          onPress={() => setOverrideInputs(prev => ({ ...prev, [cat.id]: t.points }))}>
+                          <Text style={{ fontSize: 14, fontWeight: sel ? '700' : '500',
+                            color: sel ? COLORS.terracotta : COLORS.inkSoft }}>{t.points}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              );
+            })}
 
             {groupCustomCats.length > 0 && <>
               <Text style={[s.sectionLabel, { marginTop: 8 }]}>Eigene Kategorien · Löschen</Text>

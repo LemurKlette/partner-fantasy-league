@@ -228,3 +228,55 @@ speziell die 6-Schritte-Umbau-Sequenz.
   fehlerfrei**, und `expo export` bündelt sauber durch
 - Neue Pakete: `react-native-svg` (Schritt 3), `@expo/vector-icons` war bereits über Expo
   vorhanden
+
+---
+
+# Sicherheits-Audit: behobene Punkte (2026-08-06)
+
+Nach einem vollständigen Scan von Secrets, allen 24 Migrationen (RLS, RPCs, Trigger) und der
+App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes.sql`.
+
+## 1 – Männerprofil zeigte keine Badges (kritisch)
+- Ursache: `partner_badges` und `point_entries` waren nur über `get_my_group_ids()` lesbar.
+  Männer stehen aber nie in `group_members`, sondern hängen über `partner_connections` dran —
+  beide Queries in `BadgeGrid` lieferten leer, alle Badges erschienen gesperrt mit 0 Fortschritt
+- `partner_badges` SELECT um eigene und verbundene Partner erweitert
+- `point_entries` wurde **bewusst nicht** geöffnet: die Tabelle enthält die Notizen der Frauen,
+  die privat bleiben. Stattdessen neue Funktion `partner_point_totals(partner_id)`
+  (SECURITY DEFINER, mit eigener Zugriffsprüfung), die nur die Summen je Kategorie liefert
+- `BadgeGrid` nutzt jetzt diese RPC statt `point_entries` direkt
+
+## 2 – „Konto löschen" schlug immer fehl (kritisch)
+- `delete_account()` berücksichtigte nur **einen** Partner (seit dem Mehrfach-Partner-Feature
+  falsch) und lief dann in eine Fremdschlüsselverletzung, weil `partner_connections`,
+  `partner_badges` und `point_entries` auf `partners` ohne `on delete cascade` verweisen
+- Komplett neu geschrieben nach dem Muster von `delete_partner`: löst zuerst selbst erstellte
+  Gruppen auf, dann alle eigenen Partner samt abhängiger Daten, dann Einträge in fremden
+  Gruppen, löst die Urheberschaft an Gruppenkategorien (die anderen Mitgliedern erhalten
+  bleiben) und trennt Verbindungen, in denen die Person der Mann war
+
+## 3 – Punkte und Badges für fremde Partner buchbar (hoch)
+- Die INSERT-Policies auf `point_entries` und `partner_badges` prüften nur Gruppen­mitgliedschaft,
+  nicht ob `partner_id` überhaupt der eigene Partner ist — ein Gruppenmitglied konnte per
+  direktem API-Aufruf für den Partner einer anderen Nutzerin buchen
+- Beide Policies um `partner_id = any(get_my_partner_ids())` erweitert. `award_period_title()`
+  ist SECURITY DEFINER und vergibt die Saisontitel weiterhin korrekt
+
+## 4 – Punktwert-Overrides umgingen das Tier-System (hoch)
+- `group_category_overrides` hatte keinerlei Wertprüfung, der Screen „Kategorien verwalten"
+  ein freies Zahlenfeld — eine Gruppe konnte jede Aufgabe auf beliebige Werte setzen
+- CHECK-Constraint auf `points in (2,5,10,20,40)`, Alt-Werte außerhalb des Systems werden
+  entfernt (betroffene Kategorien fallen auf ihren Standardwert zurück)
+- UI: Zahlenfeld durch dieselbe Tier-Auswahl ersetzt wie beim Anlegen eigener Kategorien
+- `handleSaveOverrides` schreibt jetzt nur noch abweichende Werte und **löscht** Overrides,
+  die wieder auf dem Standard stehen (dafür neue DELETE-Policy — bisher ließ sich ein einmal
+  gesetzter Override nicht mehr entfernen)
+
+## 5 – `join_group_by_invite_code` ohne festen `search_path` (hoch)
+- Als einzige der 13 SECURITY-DEFINER-Funktionen fehlte ihr `set search_path = public`
+  (klassischer Postgres-Rechteausweitungs-Vektor, wird auch vom Supabase-Linter gemeldet)
+
+## 10 – Alte Avatare blieben für immer im Bucket (mittel)
+- Bei jedem Fotowechsel wurde eine neue Datei geschrieben und nur die URL aktualisiert
+- Nach erfolgreichem Update werden jetzt die übrigen Dateien im Partner-Ordner entfernt —
+  bewusst *nach* dem Update, damit nie die gerade referenzierte Datei gelöscht wird
