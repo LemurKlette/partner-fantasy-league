@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 import Badge from './Badge';
 import type { BadgeTier } from './BadgeFrame';
@@ -8,6 +8,7 @@ import { CATEGORY_COLORS, CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from '
 type BadgeRow = {
   id: string;
   name: string;
+  description: string | null;
   icon_key: string | null;
   image_url: string | null;
   badge_type: number;
@@ -52,6 +53,7 @@ export default function BadgeGrid({
   const [badges, setBadges] = useState<BadgeDisplay[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<BadgeDisplay | null>(null);
 
   useEffect(() => { load(); }, [partnerId]);
 
@@ -63,7 +65,7 @@ export default function BadgeGrid({
     // nicht lesen -- ausserdem bleiben so die Notizen der Frauen privat.
     const [{ data: allBadges, error: e1 }, { data: earnedRows, error: e2 }, { data: totals, error: e3 }] = await Promise.all([
       supabase.from('badges')
-        .select('id, name, icon_key, image_url, badge_type, tier, trigger_type, trigger_value, category_filter, is_hidden')
+        .select('id, name, description, icon_key, image_url, badge_type, tier, trigger_type, trigger_value, category_filter, is_hidden')
         .order('sort_order'),
       supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId),
       supabase.rpc('partner_point_totals', { p_partner_id: partnerId }),
@@ -132,6 +134,7 @@ export default function BadgeGrid({
       progressTarget={b.trigger_value}
       surroundingColor={surroundingColor}
       width="31%"
+      onPress={() => setSelected(b)}
     />
   );
 
@@ -176,6 +179,41 @@ export default function BadgeGrid({
       )}
 
       {badges.length === 0 && <Text style={{ color: COLORS.inkMuted }}>Noch keine Badges verfügbar.</Text>}
+
+      <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
+        {/* Antippen ausserhalb der Karte schliesst das Modal. */}
+        <Pressable style={s.backdrop} onPress={() => setSelected(null)}>
+          {selected && (
+            <Pressable style={s.modalCard} onPress={() => {}}>
+              <Badge
+                name=""
+                iconKey={selected.icon_key}
+                imageUrl={selected.image_url}
+                tier={(selected.tier as BadgeTier) ?? null}
+                category={categoryOf(selected)}
+                earned={selected.earned}
+                count={selected.count}
+                size={72}
+                surroundingColor={COLORS.surface}
+                width={100}
+              />
+              <Text style={s.modalTitle}>{selected.name}</Text>
+              <Text style={s.modalText}>{selected.description ?? 'Keine Beschreibung hinterlegt.'}</Text>
+              {selected.count > 1 && (
+                <Text style={s.modalMeta}>{selected.count}× erhalten</Text>
+              )}
+              {!selected.earned && selected.progressCurrent != null && selected.trigger_value != null && (
+                <Text style={s.modalMeta}>
+                  Fortschritt: {Math.min(selected.progressCurrent, selected.trigger_value)} / {selected.trigger_value}
+                </Text>
+              )}
+              <TouchableOpacity style={s.modalBtn} onPress={() => setSelected(null)}>
+                <Text style={s.modalBtnText}>Zurück</Text>
+              </TouchableOpacity>
+            </Pressable>
+          )}
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -202,4 +240,32 @@ const s = StyleSheet.create({
   },
   errorTitle: { fontSize: 14, fontWeight: '600', color: COLORS.terracotta },
   errorText: { fontSize: 13, color: COLORS.inkSoft },
+
+  backdrop: {
+    flex: 1,
+    backgroundColor: COLORS.scrim,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  modalCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'stretch',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: COLORS.ink, textAlign: 'center' },
+  modalText: { fontSize: 14, color: COLORS.inkSoft, textAlign: 'center', lineHeight: 20 },
+  modalMeta: { fontSize: 12, color: COLORS.inkMuted, textAlign: 'center' },
+  modalBtn: {
+    marginTop: 12,
+    backgroundColor: COLORS.terracotta,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  modalBtnText: { color: COLORS.onTerracotta, fontWeight: 'bold', fontSize: 16 },
 });

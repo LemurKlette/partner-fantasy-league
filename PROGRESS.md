@@ -414,3 +414,17 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
 - Einheitliche Kachelbreite von 31 % für alle Raster, damit die Spalten überall fluchten
 - `Badge` bekam dafür zwei neue Props: `width` (Rasterbreite) und `onPress` (Vorbereitung
   für das Info-Modal in Schritt 2)
+
+## Schritt 2 – Info-Modal beim Antippen eines Badges
+- Jedes Badge ist jetzt antippbar und öffnet ein Modal mit Rahmen, Name, Erklärung und
+  einem „Zurück"-Button; Antippen neben der Karte schließt ebenfalls
+- Zusätzlich im Modal: Anzahl bei mehrfach erhaltenen Badges und der aktuelle Fortschritt
+  bei noch offenen Badges
+- Die Spalte `badges.description` existierte bereits seit Migration 09, enthielt aber eher
+  Etiketten („Bronze · 200 Punkte in Haushalt"). Migration 28 schreibt alle 30 Texte als
+  Anleitung um („Sammle 200 Punkte in der Kategorie Haushalt.")
+- Geheime Badges zeigen ihre Erklärung damit erst, wenn sie verdient wurden — vorher werden
+  sie ohnehin gar nicht gerendert
+- `COLORS.scrim` für die Abdunklung hinter dem Modal ergänzt, damit auch dafür kein
+  Farbwert außerhalb des Themes steht
+- Migration: `supabase/migrations/20260804_28_badge_descriptions.sql`

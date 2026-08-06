@@ -23,6 +23,9 @@ export const COLORS = {
   // Gesperrte Badges
   disabled:    '#D3D1C7',
   disabledInk: '#444441',
+
+  // Abdunklung hinter Modalen
+  scrim: 'rgba(0, 0, 0, 0.5)',
 } as const;
 
 // Kategoriefarben. Haushalt ist Ocker, NICHT Terrakotta — Terrakotta bleibt

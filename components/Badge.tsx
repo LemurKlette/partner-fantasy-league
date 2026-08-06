@@ -99,9 +99,13 @@ export default function Badge({
         )}
       </View>
 
-      <Text style={[s.name, locked && s.nameLocked]} numberOfLines={2}>
-        {name}
-      </Text>
+      {/* Im Info-Modal wird der Name separat als Ueberschrift gesetzt und
+          hier leer gelassen -- dann keine leere Textzeile rendern. */}
+      {name.length > 0 && (
+        <Text style={[s.name, locked && s.nameLocked]} numberOfLines={2}>
+          {name}
+        </Text>
+      )}
 
       {showProgress && (
         <>
