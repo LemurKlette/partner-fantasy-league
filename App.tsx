@@ -33,6 +33,7 @@ type ManConnection = { id: string; invite_code: string; connected_at: string | n
 type PartnerWithCode = { id: string; name: string; invite_code: string; avatar_url: string | null };
 type ActivityEntry = {
   id: string; points: number; created_at: string; note: string | null; created_by: string;
+  capped_reason: string | null;
   partners: { name: string };
   point_categories: { name: string; icon_key: string | null; category_tag: string | null };
 };
@@ -156,7 +157,6 @@ export default function App() {
   const [showAddPartnerForm, setShowAddPartnerForm] = useState(false);
   const [newPartnerNameForProfile, setNewPartnerNameForProfile] = useState('');
   const [groupCustomCats, setGroupCustomCats] = useState<Category[]>([]);
-  const [overrideInputs, setOverrideInputs] = useState<Record<string, number>>({});
   const [period, setPeriod] = useState<Period>('week');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -178,7 +178,20 @@ export default function App() {
     });
   }, []);
 
+  // Zeitzone des Geraets an den Server melden. Die Anti-Farming-Regeln
+  // brauchen sie, um die Tagesgrenze richtig zu ziehen (vorher lief das
+  // in UTC, der neue Tag begann im Sommer also um 02:00 Uhr).
+  async function reportDeviceTimezone() {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) await supabase.rpc('set_my_timezone', { p_tz: tz });
+    } catch {
+      // Ohne Meldung faellt der Server auf Europe/Berlin zurueck.
+    }
+  }
+
   async function loadUserData(session: Session) {
+    reportDeviceTimezone();
     const { data: pts } = await supabase.from('partners').select('id, name, avatar_url')
       .eq('owner_user_id', session.user.id).order('created_at');
     const p = (pts ?? [])[0] ?? null;
@@ -413,7 +426,7 @@ export default function App() {
 
   async function loadActivityLog(groupId: string) {
     const { data } = await supabase.from('point_entries')
-      .select('id, points, created_at, note, created_by, partners(name), point_categories(name, icon_key, category_tag)')
+      .select('id, points, created_at, note, created_by, capped_reason, partners(name), point_categories(name, icon_key, category_tag)')
       .eq('group_id', groupId).order('created_at', { ascending: false }).limit(10);
     // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
     setActivityLog((data ?? []) as unknown as ActivityEntry[]);
@@ -500,64 +513,25 @@ export default function App() {
     );
   }
 
+  // Punktwerte der Standard-Aufgaben sind fest an ihre Aufwandsstufe
+  // gebunden und lassen sich nicht mehr pro Gruppe ueberschreiben --
+  // nur so bleiben Gruppen untereinander vergleichbar.
   async function loadCategories() {
-    const [{ data: cats }, { data: overrides }] = await Promise.all([
-      supabase.from('point_categories')
-        .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
-        .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
-        .order('name'),
-      supabase.from('group_category_overrides')
-        .select('category_id, points')
-        .eq('group_id', selectedGroup!.id),
-    ]);
-    const overrideMap: Record<string, number> = {};
-    (overrides ?? []).forEach((o: any) => { overrideMap[o.category_id] = o.points; });
-    setCategories(((cats ?? []) as Category[]).map(c => ({
-      ...c,
-      points: overrideMap[c.id] ?? c.points,
-    })));
+    const { data: cats } = await supabase.from('point_categories')
+      .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
+      .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
+      .order('name');
+    setCategories((cats ?? []) as Category[]);
   }
 
   async function loadManageCategories() {
     setLoading(true);
-    const [{ data: globalCats }, { data: customCats }, { data: overrides }] = await Promise.all([
-      supabase.from('point_categories').select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag').eq('is_global', true).order('name'),
-      supabase.from('point_categories').select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag').eq('group_id', selectedGroup!.id).order('name'),
-      supabase.from('group_category_overrides').select('category_id, points').eq('group_id', selectedGroup!.id),
-    ]);
-    const overrideMap: Record<string, number> = {};
-    (overrides ?? []).forEach((o: any) => { overrideMap[o.category_id] = o.points; });
-    (globalCats ?? []).forEach((c: any) => { if (overrideMap[c.id] === undefined) overrideMap[c.id] = c.points; });
-    setCategories((globalCats ?? []) as Category[]);
+    const { data: customCats } = await supabase.from('point_categories')
+      .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
+      .eq('group_id', selectedGroup!.id).order('name');
     setGroupCustomCats((customCats ?? []) as Category[]);
-    setOverrideInputs(overrideMap);
     setLoading(false);
     setScreen('manage-categories');
-  }
-
-  async function handleSaveOverrides() {
-    setLoading(true);
-    // Nur tatsaechlich abweichende Werte speichern; Kategorien, die wieder
-    // auf ihrem Standardwert stehen, bekommen ihren Override entfernt.
-    const changed = categories.filter(c => (overrideInputs[c.id] ?? c.points) !== c.points);
-    const reset = categories.filter(c => (overrideInputs[c.id] ?? c.points) === c.points);
-
-    if (changed.length > 0) {
-      const { error } = await supabase.from('group_category_overrides')
-        .upsert(
-          changed.map(c => ({ group_id: selectedGroup!.id, category_id: c.id, points: overrideInputs[c.id] })),
-          { onConflict: 'group_id,category_id' },
-        );
-      if (error) { Alert.alert('Fehler', error.message); setLoading(false); return; }
-    }
-    if (reset.length > 0) {
-      const { error } = await supabase.from('group_category_overrides')
-        .delete().eq('group_id', selectedGroup!.id).in('category_id', reset.map(c => c.id));
-      if (error) { Alert.alert('Fehler', error.message); setLoading(false); return; }
-    }
-    Alert.alert('Gespeichert!', 'Punktwerte für diese Gruppe wurden angepasst.');
-    setScreen('group-detail');
-    setLoading(false);
   }
 
   async function handleDeletePointEntry(entryId: string) {
@@ -691,6 +665,26 @@ export default function App() {
     );
   }
 
+  async function handleLeaveGroup(groupId: string, groupName: string) {
+    Alert.alert(
+      'Gruppe verlassen',
+      `"${groupName}" wirklich verlassen? Dein Partner erscheint dann nicht mehr im Ranking dieser Gruppe. Die bisherigen Punkte bleiben erhalten.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Verlassen', style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            const { error } = await supabase.rpc('leave_group', { p_group_id: groupId });
+            if (error) { Alert.alert('Fehler', error.message); }
+            else { setGroups(prev => prev.filter(g => g.id !== groupId)); }
+            setLoading(false);
+          },
+        },
+      ]
+    );
+  }
+
   async function handleSavePoints() {
     if (!selectedCategory) { Alert.alert('Fehler', 'Bitte wähle eine Kategorie.'); return; }
     const effectivePartnerId = selectedPartnerIdForPoints ?? partner!.id;
@@ -711,10 +705,20 @@ export default function App() {
       setWithoutRequest(false);
       await Promise.all([loadRankingForGroup(selectedGroup!.id, period), loadActivityLog(selectedGroup!.id)]);
       await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
+      const awarded = data?.points ?? requestedPoints;
       if (data?.capped_reason === 'daily_limit') {
-        Alert.alert('Tageslimit erreicht', 'Er hatte heute wohl einen sehr guten Tag – weitere Punkte zählen ab morgen.');
+        Alert.alert(
+          'Tageslimit erreicht',
+          awarded > 0
+            ? `Er hatte heute wohl einen sehr guten Tag – davon zählen noch ${awarded} Punkte, der Rest ab morgen.`
+            : 'Er hatte heute wohl einen sehr guten Tag – weitere Punkte zählen ab morgen.',
+        );
+      } else if (data?.capped_reason === 'task_repeat') {
+        Alert.alert('Schon zweimal heute', 'Diese Aufgabe wurde heute bereits zweimal eingetragen und zählt deshalb nicht mehr.');
+      } else if (awarded < requestedPoints) {
+        Alert.alert('Gespeichert!', `${awarded} statt ${requestedPoints} Punkte für ${effectivePartnerName} – dieselbe Aufgabe gab es heute schon einmal.`);
       } else {
-        Alert.alert('Gespeichert!', `${data?.points ?? requestedPoints} Punkte fuer ${effectivePartnerName} vergeben.`);
+        Alert.alert('Gespeichert!', `${awarded} Punkte für ${effectivePartnerName} vergeben.`);
       }
       setScreen('group-detail');
     }
@@ -801,9 +805,31 @@ export default function App() {
     const stale = (existing ?? []).filter(f => f.name !== fileName).map(f => `${partnerId}/${f.name}`);
     if (stale.length > 0) await supabase.storage.from('avatars').remove(stale);
 
-    setMyPartners(prev => prev.map(p => p.id === partnerId ? { ...p, avatar_url: pub.publicUrl } : p));
-    if (partner?.id === partnerId) setPartner(prev => prev ? { ...prev, avatar_url: pub.publicUrl } : prev);
+    applyAvatarLocally(partnerId, pub.publicUrl);
     setLoading(false);
+  }
+
+  // Ein neues Foto muss sofort ueberall sichtbar sein, nicht erst nach
+  // erneutem Login. Deshalb werden hier alle Zustaende aktualisiert, in
+  // denen ein Avatar steckt.
+  function applyAvatarLocally(partnerId: string, url: string) {
+    const patch = <T extends { id: string; avatar_url?: string | null }>(p: T): T =>
+      p.id === partnerId ? { ...p, avatar_url: url } : p;
+
+    setMyPartners(prev => prev.map(patch));
+    setMyAllPartners(prev => prev.map(patch));
+    setPartner(prev => (prev && prev.id === partnerId ? { ...prev, avatar_url: url } : prev));
+    setViewedPartner(prev => (prev && prev.id === partnerId ? { ...prev, avatar_url: url } : prev));
+    setGroupMembers(prev => prev.map(m =>
+      m.partner && m.partner.id === partnerId
+        ? { ...m, partner: { ...m.partner, avatar_url: url } }
+        : m
+    ));
+    setGroupAvatarsMap(prev => {
+      const next: Record<string, GroupPartnerPreview[]> = {};
+      for (const [groupId, list] of Object.entries(prev)) next[groupId] = list.map(patch);
+      return next;
+    });
   }
 
   async function handleAddPartnerFromProfile() {
@@ -964,17 +990,23 @@ export default function App() {
   if (screen === 'groups') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-          <View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          {partner ? (
+            <TouchableOpacity
+              style={[s.iconRow, { flex: 1, gap: 12 }]}
+              onPress={() => { setViewedPartner(partner); setScreen('partner-badges'); }}>
+              <Avatar uri={partner.avatar_url} name={partner.name} size={52} />
+              <View style={{ flex: 1 }}>
+                <View style={[s.iconRow, { gap: 4 }]}>
+                  <Text style={s.headerTitle} numberOfLines={1}>{partner.name}</Text>
+                  <MaterialCommunityIcons name={ICONS.actionForward as any} size={18} color={COLORS.terracotta} />
+                </View>
+                <Text style={s.headerSub}>Badges & Erfolge ansehen</Text>
+              </View>
+            </TouchableOpacity>
+          ) : (
             <Text style={s.headerTitle}>Meine Gruppen</Text>
-            {partner && (
-              <TouchableOpacity style={s.iconRow} onPress={() => { setViewedPartner(partner); setScreen('partner-badges'); }}>
-                <Avatar uri={partner.avatar_url} name={partner.name} size={24} />
-                <Text style={s.headerSub}>{partner.name}</Text>
-                <MaterialCommunityIcons name={ICONS.actionForward as any} size={16} color={COLORS.terracotta} />
-              </TouchableOpacity>
-            )}
-          </View>
+          )}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <TouchableOpacity onPress={() => { loadProfileData(); setScreen('profile'); }}>
               <MaterialCommunityIcons name={ICONS.navProfile as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
@@ -991,6 +1023,7 @@ export default function App() {
             <Text style={s.empty}>Du bist noch in keiner Gruppe.</Text>
           </View>
         : <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+            <Text style={s.sectionLabel}>Meine Gruppen</Text>
             {groups.map(item => (
               <View key={item.id} style={s.card}>
                 <TouchableOpacity onPress={() => openGroup(item)}>
@@ -1009,10 +1042,15 @@ export default function App() {
                     <MaterialCommunityIcons name={ICONS.actionForward as any} size={14} color={COLORS.inkMuted} />
                   </View>
                 </TouchableOpacity>
-                {item.created_by === session?.user.id && (
+                {item.created_by === session?.user.id ? (
                   <TouchableOpacity onPress={() => handleDeleteGroup(item.id, item.name)} style={[s.iconRow, { marginTop: 10, alignSelf: 'flex-start', gap: 4 }]}>
                     <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
                     <Text style={{ color: COLORS.terracotta, fontSize: 12, fontWeight: '600' }}>Gruppe löschen</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity onPress={() => handleLeaveGroup(item.id, item.name)} style={[s.iconRow, { marginTop: 10, alignSelf: 'flex-start', gap: 4 }]}>
+                    <MaterialCommunityIcons name={ICONS.actionLogout as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                    <Text style={{ color: COLORS.terracotta, fontSize: 12, fontWeight: '600' }}>Gruppe verlassen</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1066,7 +1104,7 @@ export default function App() {
         style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: COLORS.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}
         onPress={loadManageCategories}>
         <MaterialCommunityIcons name={ICONS.navSettings as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
-        <Text style={{ fontSize: 12, color: COLORS.terracotta }}>Kategorien anpassen</Text>
+        <Text style={{ fontSize: 12, color: COLORS.terracotta }}>Eigene Kategorien</Text>
       </TouchableOpacity>
 
       {loading
@@ -1135,7 +1173,11 @@ export default function App() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                       <Text style={[s.cardSub, { flex: 1, marginRight: 8 }]}>{entry.note ? `„${entry.note}"` : ''}</Text>
                       <Text style={[s.pts, { fontSize: 13 }, entry.points === 0 && { color: COLORS.inkMuted }]}>
-                        {entry.points === 0 ? '0 Punkte – Tageslimit erreicht' : `+${entry.points}`} · {timeAgo(entry.created_at)}
+                        {entry.points === 0
+                          ? (entry.capped_reason === 'task_repeat'
+                              ? '0 Punkte – heute schon zweimal'
+                              : '0 Punkte – Tageslimit erreicht')
+                          : `+${entry.points}`} · {timeAgo(entry.created_at)}
                       </Text>
                     </View>
                   </View>
@@ -1331,51 +1373,24 @@ export default function App() {
           <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
           <Text style={s.back}>Zurück</Text>
         </TouchableOpacity>
-        <Text style={s.headerTitle}>Kategorien verwalten</Text>
+        <Text style={s.headerTitle}>Eigene Kategorien</Text>
         <Text style={s.headerSub}>{selectedGroup?.name}</Text>
       </View>
       {loading
         ? <View style={s.center}><ActivityIndicator color={COLORS.terracotta} /></View>
-        : <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 130 }}>
-            <Text style={s.sectionLabel}>Standard-Kategorien · Aufwandsstufe anpassen</Text>
-            <Text style={{ fontSize: 12, color: COLORS.inkMuted, marginBottom: 2 }}>
-              Auch angepasste Werte bleiben im Tier-System (2 / 5 / 10 / 20 / 40), damit
-              Gruppen vergleichbar bleiben.
+        : <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 60 }}>
+            <Text style={{ fontSize: 13, color: COLORS.inkSoft, lineHeight: 19 }}>
+              Die Punktwerte der Standard-Aufgaben sind fest an ihre Aufwandsstufe gebunden
+              und lassen sich nicht ändern — nur so bleiben Gruppen untereinander
+              vergleichbar. Eigene Kategorien kannst du hier verwalten.
             </Text>
-            {categories.map(cat => {
-              const current = overrideInputs[cat.id] ?? cat.points;
-              return (
-                <View key={cat.id} style={[s.card, { gap: 10 }]}>
-                  <View style={[s.iconRow, { gap: 10 }]}>
-                    <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} size={ICON_SIZE.inline} circle={32} />
-                    <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
-                    {current !== cat.points && (
-                      <Text style={{ fontSize: 11, color: COLORS.inkMuted }}>Standard: {cat.points}</Text>
-                    )}
-                  </View>
-                  <View style={{ flexDirection: 'row', gap: 6 }}>
-                    {TIERS.map(t => {
-                      const sel = current === t.points;
-                      return (
-                        <TouchableOpacity key={t.tier}
-                          style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
-                            borderWidth: sel ? 2 : 1,
-                            borderColor: sel ? COLORS.terracotta : COLORS.sandDeep,
-                            backgroundColor: COLORS.surface }}
-                          onPress={() => setOverrideInputs(prev => ({ ...prev, [cat.id]: t.points }))}>
-                          <Text style={{ fontSize: 14, fontWeight: sel ? '700' : '500',
-                            color: sel ? COLORS.terracotta : COLORS.inkSoft }}>{t.points}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              );
-            })}
 
-            {groupCustomCats.length > 0 && <>
-              <Text style={[s.sectionLabel, { marginTop: 8 }]}>Eigene Kategorien · Löschen</Text>
-              {groupCustomCats.map(cat => (
+            {groupCustomCats.length === 0
+              ? <View style={[s.center, { paddingVertical: 40 }]}>
+                  <MaterialCommunityIcons name={ICONS.emptyState as any} size={40} color={COLORS.inkMuted} style={{ marginBottom: 8 }} />
+                  <Text style={s.empty}>Noch keine eigenen Kategorien.</Text>
+                </View>
+              : groupCustomCats.map(cat => (
                 <View key={cat.id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
                   <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} size={ICON_SIZE.inline} circle={32} />
                   <Text style={[s.cardTitle, { flex: 1, fontSize: 14 }]}>{cat.name}</Text>
@@ -1385,17 +1400,10 @@ export default function App() {
                     <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
                   </TouchableOpacity>
                 </View>
-              ))}
-            </>}
+              ))
+            }
           </ScrollView>
       }
-      <View style={s.footer}>
-        {loading ? <ActivityIndicator /> : (
-          <TouchableOpacity style={s.btn} onPress={handleSaveOverrides}>
-            <Text style={s.btnText}>Änderungen speichern</Text>
-          </TouchableOpacity>
-        )}
-      </View>
       <StatusBar style="auto" />
     </View>
   );
@@ -1490,10 +1498,10 @@ export default function App() {
             { icon: ICONS.inviteLink, title: 'Freundinnen einladen', text: 'Öffne deine Gruppe und tippe oben rechts auf den Code. Der Teilen-Dialog öffnet sich automatisch — ab zu WhatsApp!' },
             { icon: ICONS.helpPartner, title: 'Partner anlegen & verbinden', text: 'Beim ersten Start legst du deinen Partner an und bekommst automatisch einen Code (P-XXXXXXXX). Teile ihn mit ihm — dann kann er sich mit eigenem Login verbinden und seine Badges sehen.' },
             { icon: ICONS.actionAddPoints, title: 'Punkte vergeben', text: 'Wähle eine Aufgabe aus einer der vier Kategorien (Haushalt, Mental Load, Romantik, Verlässlichkeit). Jede hat einen festen Punktwert nach Aufwand: 2 / 5 / 10 / 20 / 40. Bei Haushalt & Mental Load kannst du zusätzlich "Ohne Aufforderung" aktivieren — gibt ×1,5 Punkte.' },
-            { icon: ICONS.helpAntiFarming, title: 'Anti-Farming-Schutz', text: 'Dieselbe Aufgabe zählt am selben Tag beim 2. Mal nur halb, ab dem 3. Mal 0 Punkte. Außerdem gibt es ein Tageslimit von 80 Punkten pro Partner — damit nicht ein einziger guter Tag die ganze Saison entscheidet.' },
+            { icon: ICONS.helpAntiFarming, title: 'Anti-Farming-Schutz', text: 'Dieselbe Aufgabe zählt am selben Tag beim 2. Mal nur halb, ab dem 3. Mal 0 Punkte. Außerdem gibt es ein hartes Tageslimit von 80 Punkten pro Partner — ein Eintrag, der darüber hinausgeht, wird auf den Rest gekappt. Der Tageswechsel richtet sich nach der Zeitzone deines Handys.' },
             { icon: ICONS.helpRanking, title: 'Ranking & Saisontitel', text: 'Wähle "Woche", "Monat" oder "Jahr". Wer zum Ende eines Zeitraums vorne liegt, bekommt automatisch den Titel "Spieler der Woche" / "Monatssieger" / "Saisonsieger" als Badge.' },
             { icon: ICONS.actionUndo, title: 'Punkte-Eintrag zurücknehmen', text: 'Neben deinen eigenen Einträgen im Aktivitäts-Log siehst du ein kleines Kreuz — damit kannst du versehentliche Einträge wieder löschen.' },
-            { icon: ICONS.navSettings, title: 'Kategorien anpassen', text: 'Über "Kategorien anpassen" in deiner Gruppe kannst du Punktwerte für eure Gruppe individuell überschreiben — denn nicht alle Männer sind gleich faul.' },
+            { icon: ICONS.navSettings, title: 'Feste Punktwerte', text: 'Die Punktwerte der Standard-Aufgaben sind fest an ihre Aufwandsstufe gebunden und lassen sich nicht ändern — nur so bleiben eure Ergebnisse mit anderen Gruppen vergleichbar. Über "Eigene Kategorien" verwaltest du die selbst erfundenen Aufgaben.' },
             { icon: ICONS.helpCustomCategory, title: 'Eigene Kategorie', text: 'Erfinde eigene Aufgaben und wähle dafür eine der fünf Aufwandsstufen (2/5/10/20/40 Punkte) — kein freies Zahlenfeld mehr, damit die Werte fair und vergleichbar bleiben.' },
             { icon: ICONS.badgeSeasonWinner, title: 'Badges deines Partners ansehen', text: 'Tippe in "Meine Gruppen" auf seinen Namen — du siehst dieselbe Badge-Übersicht wie er selbst: Meilensteine, Kategorie-Spezialisten, Konsistenz-Serien, Saisontitel und versteckte Erfolge.' },
             { icon: ICONS.actionDelete, title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link.' },
@@ -1540,8 +1548,9 @@ export default function App() {
             { q: 'Warum sehe ich meinen Partner nicht im Ranking?', a: 'Entweder wurden noch keine Punkte für ihn vergeben, oder er ist für diese Gruppe deaktiviert (siehe "Meine Partner in dieser Gruppe" im Gruppen-Detail).' },
             { q: 'Kann ich einen Punkteintrag rückgängig machen?', a: 'Ja — im Aktivitäts-Log deiner Gruppe kannst du eigene Einträge über das kleine Kreuz löschen.' },
             { q: 'Sieht mein Partner die Punkte?', a: 'Er sieht seine Badges und seinen Fortschritt über sein eigenes Profil, aber nicht das direkte Ranking oder die Gruppen-Ansicht — die bleibt euch Frauen vorbehalten.' },
-            { q: 'Warum bekomme ich manchmal 0 Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute schon zweimal für ihn eingetragen (Anti-Farming-Schutz), oder das Tageslimit von 80 Punkten ist erreicht. Im Log steht dann "Tageslimit erreicht".' },
-            { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
+            { q: 'Warum bekomme ich manchmal 0 oder weniger Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute schon eingetragen (beim 2. Mal gibt es die Hälfte, ab dem 3. Mal nichts), oder das Tageslimit von 80 Punkten ist erreicht. Der jeweilige Grund steht im Aktivitäts-Log.' },
+            { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit. Diese Werte sind unveränderlich — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
+            { q: 'Kann ich eine Gruppe wieder verlassen?', a: 'Ja — auf der Gruppenkarte in der Übersicht. Dein Partner verschwindet dann aus dem Ranking dieser Gruppe, die bisherigen Punkte bleiben als Historie erhalten. Hast du die Gruppe selbst erstellt, kannst du sie nur löschen.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
             { q: 'Kann ich eine Gruppe löschen?', a: 'Nur wenn du sie erstellt hast — dann findest du einen "Gruppe löschen"-Link auf der Gruppenkarte in "Meine Gruppen".' },

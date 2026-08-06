@@ -276,7 +276,75 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
 - Als einzige der 13 SECURITY-DEFINER-Funktionen fehlte ihr `set search_path = public`
   (klassischer Postgres-Rechteausweitungs-Vektor, wird auch vom Supabase-Linter gemeldet)
 
+## 6 – Tageslimit ließ sich um bis zu 39 Punkte überschreiten (mittel)
+- Der Trigger prüfte nur, *ob* die 80 Punkte erreicht sind — der Eintrag, der die Grenze
+  überschreitet, zählte voll (bei 75 Punkten gab eine Tier-5-Aufgabe noch volle 40 → 115)
+- Jetzt wird erst die Halbierung bei Wiederholung angewendet und danach auf den Restbetrag
+  bis 80 gekappt. Die App meldet den Teilbetrag zurück („davon zählen noch X Punkte")
+
+## 7 – Tagesgrenze lief in UTC statt in der Zeitzone des Geräts (mittel)
+- Der „neue Tag" begann im Sommer um 02:00 Uhr deutscher Zeit
+- Neue Spalte `profiles.timezone`; die App meldet beim Login die Zeitzone des Mobilgeräts
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`) über die RPC `set_my_timezone`, die
+  den Wert gegen `pg_timezone_names` validiert
+- Der Anti-Farming-Trigger zieht die Tagesgrenze jetzt in dieser Zeitzone, Fallback
+  `Europe/Berlin`. Die Woche/Monat/Jahr-Filter der App rechneten bereits in Gerätezeit
+- `award_period_title()` richtet sich als gruppenübergreifender Cronjob an
+  `Europe/Berlin` aus statt an UTC; zusätzlich `revoke execute ... from public`, da die
+  Funktion nur für den Cronjob gedacht ist
+
+## 8 – Kategorien waren weltweit lesbar (mittel)
+- Die SELECT-Policy war `using (true)` ohne Rollenbeschränkung. Da der Publishable Key im
+  App-Bundle steckt, konnte auch eine unangemeldete Person sämtliche selbst erstellten
+  Kategorienamen aller Gruppen auslesen
+- Jetzt `to authenticated` und nur noch globale Kategorien plus die der eigenen Gruppen
+
+## 9 – Eine Gruppe ließ sich nicht verlassen (mittel)
+- `group_members` hatte keine DELETE-Policy — wer beigetreten war, kam nur wieder raus,
+  wenn die Erstellerin die ganze Gruppe löschte
+- Neue RPC `leave_group(group_id)`: nimmt die eigenen Partner aus der Gruppenwertung
+  (Punkte bleiben als Historie) und entfernt die Mitgliedschaft. Erstellerinnen werden
+  bewusst abgewiesen — für sie gibt es „Gruppe löschen"
+- Auf der Gruppenkarte erscheint je nach Rolle „Gruppe löschen" oder „Gruppe verlassen"
+
 ## 10 – Alte Avatare blieben für immer im Bucket (mittel)
 - Bei jedem Fotowechsel wurde eine neue Datei geschrieben und nur die URL aktualisiert
 - Nach erfolgreichem Update werden jetzt die übrigen Dateien im Partner-Ordner entfernt —
   bewusst *nach* dem Update, damit nie die gerade referenzierte Datei gelöscht wird
+
+---
+
+# Weitere Anpassungen (2026-08-06)
+
+## Standard-Punktwerte sind jetzt unveränderlich
+- Die Möglichkeit, Punktwerte der voreingestellten Aufgaben pro Gruppe zu überschreiben,
+  wurde komplett entfernt — inklusive der zugehörigen Bedienelemente
+- `loadCategories` liest keine Overrides mehr, `handleSaveOverrides` und der
+  „Änderungen speichern"-Button sind entfallen
+- Der Screen heißt jetzt „Eigene Kategorien" und dient nur noch dazu, selbst erstellte
+  Kategorien einzusehen und zu löschen; der Link im Gruppen-Detail wurde entsprechend
+  umbenannt
+- Die Tabelle `group_category_overrides` bleibt vorerst bestehen, wird aber von der App
+  nicht mehr gelesen oder geschrieben
+
+## Startseite: Partner statt „Meine Gruppen" im Header
+- Im Kopf der Übersicht steht jetzt prominent der Partnername mit seinem Bild (52 px), die
+  ganze Zeile führt zur Badge-Seite
+- „Meine Gruppen" ist zur Abschnittsüberschrift über der Gruppenliste geworden
+- Solange noch kein Partner angelegt ist, steht wie bisher „Meine Gruppen" im Header
+
+## Partnerbild wird überall sofort aktualisiert
+- Bisher wurde nach dem Hochladen nur die Profilliste und der Header-Partner aktualisiert;
+  Gruppenkarten, Mitgliederliste, Partner-Auswahl beim Punktevergeben und die Badge-Seite
+  zeigten das alte Bild bis zum nächsten Login
+- Neue Hilfsfunktion `applyAvatarLocally()` schreibt die neue URL in alle betroffenen
+  Zustände (`myPartners`, `myAllPartners`, `partner`, `viewedPartner`, `groupMembers`,
+  `groupAvatarsMap`)
+
+## Nebenbei
+- Rückmeldung beim Punktevergeben unterscheidet jetzt die drei Fälle: gekappt durch
+  Tageslimit, dritter Eintrag derselben Aufgabe, oder halbierte Punkte beim zweiten Eintrag
+- Das Aktivitätslog zeigt bei 0-Punkte-Einträgen den konkreten Grund
+  (`capped_reason`) statt pauschal „Tageslimit erreicht"
+- Hilfe-Seite und FAQ an die neuen Regeln angepasst (feste Punktwerte, Kappung,
+  Zeitzone, Gruppe verlassen)
