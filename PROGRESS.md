@@ -428,3 +428,16 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
 - `COLORS.scrim` für die Abdunklung hinter dem Modal ergänzt, damit auch dafür kein
   Farbwert außerhalb des Themes steht
 - Migration: `supabase/migrations/20260804_28_badge_descriptions.sql`
+
+## Schritt 3 – Eigene Kategorien in eigener Farbe
+- Selbst erstellte Kategorien wurden bisher im Haushalt-Ocker dargestellt und sahen dadurch
+  aus wie Standard-Aufgaben
+- Neue Farbe `CATEGORY_COLORS.custom` (Taupe, stroke `#8B7355` / fill `#F5E6D3`)
+- `catColors()` fällt jetzt auf `custom` statt auf `household` zurück — da eigene Kategorien
+  als einzige keinen `category_tag` haben, greift das automatisch überall: Punkte vergeben,
+  Aktivitätslog und Kategorien-Verwaltung
+- Die Überschrift „Eigene Kategorien" beim Punktevergeben trägt Icon und Farbe ebenfalls
+- Unverändert bleibt die Rückfallfarbe in `BadgeFrame`: Badges ohne Kategorie (Meilensteine,
+  Konsistenz, Saisontitel) behalten wie im Design-Konzept festgelegt den Ocker-Kreis
+- Ebenfalls unverändert: die Icon-Auswahl beim Anlegen nutzt weiter Terrakotta, das ist dort
+  ein Auswahlzustand und keine Kategorie-Kennzeichnung

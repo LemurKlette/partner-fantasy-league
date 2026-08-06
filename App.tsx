@@ -61,9 +61,12 @@ const CATEGORY_TAG_ICONS: Record<string, string> = {
 
 // Farbpaar einer Kategorie. Faellt auf Ocker zurueck, wenn eine eigene
 // Kategorie ohne category_tag angelegt wurde.
+// Selbst erstellte Kategorien haben keinen category_tag und bekommen
+// deshalb das neutrale Taupe -- so sind sie auf den ersten Blick von den
+// vier Standard-Kategorien zu unterscheiden.
 function catColors(tag: string | null | undefined) {
   const key = tag ? CATEGORY_TAG_TO_KEY[tag] : undefined;
-  return CATEGORY_COLORS[(key ?? 'household') as CategoryKey];
+  return CATEGORY_COLORS[(key ?? 'custom') as CategoryKey];
 }
 
 // Kategorie-Icon im farbigen Kreis (Aufgabenlisten, Aktivitaetslog)
@@ -1364,7 +1367,11 @@ export default function App() {
         )}
         {categories.filter(c => !c.is_global).length > 0 && (
           <>
-            <Text style={s.sectionLabel}>Eigene Kategorien</Text>
+            <View style={[s.iconRow, { marginTop: 4, gap: 8 }]}>
+              <MaterialCommunityIcons name={ICONS.helpCustomCategory as any} size={ICON_SIZE.inline}
+                color={CATEGORY_COLORS.custom.stroke} />
+              <Text style={[s.sectionLabel, { color: CATEGORY_COLORS.custom.stroke }]}>Eigene Kategorien</Text>
+            </View>
             {categories.filter(c => !c.is_global).map(cat => (
               <TouchableOpacity key={cat.id} style={[s.card, s.iconRow, selectedCategory?.id === cat.id && s.cardSelected]} onPress={() => { setSelectedCategory(cat); setWithoutRequest(false); }}>
                 <CategoryIcon tag={cat.category_tag} iconKey={cat.icon_key} />

@@ -36,6 +36,9 @@ export const CATEGORY_COLORS = {
   mentalLoad:  { stroke: '#3B6D11', fill: '#EAF3DE' },  // Olivgrün
   romance:     { stroke: '#993556', fill: '#FBEAF0' },  // Beere
   reliability: { stroke: '#0F6E56', fill: '#E1F5EE' },  // Petrol
+  // Selbst erstellte Kategorien. Neutrales Taupe, warm wie die anderen,
+  // aber klar unterscheidbar — signalisiert "keine Standard-Aufgabe".
+  custom:      { stroke: '#8B7355', fill: '#F5E6D3' },  // Taupe
 } as const;
 
 export type CategoryKey = keyof typeof CATEGORY_COLORS;
