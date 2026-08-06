@@ -374,3 +374,28 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
 - **Offen:** rund 15 weitere Loader (`openGroup`, `loadRankingForGroup`, `loadGroups`,
   `loadProfileData` …) verschlucken Abfragefehler auf dieselbe Weise und würden bei einem
   Problem ebenfalls nur leere Listen zeigen
+
+## Fehlerbehandlung flächendeckend nachgezogen (2026-08-06)
+- Neuer zentraler Helfer `failed(titel, error)` in `App.tsx`: meldet den Fehler und gibt
+  `true` zurück, damit der Aufrufer abbrechen kann. Enthält eine 1,5-Sekunden-Sperre, damit
+  bei parallelen Abfragen (z.B. Ranking + Log + Badges im Offline-Fall) nicht mehrere
+  Dialoge übereinander stapeln
+- Umgestellt: `loadUserData`, `loadManProfile`, `loadGroups`, `loadGroupAvatarPreviews`,
+  `loadRankingForGroup`, `loadEarnedBadges`, `loadActivityLog`, `checkAndAwardBadges`,
+  `openGroup`, `loadProfileData`, `handleCreateGroup`
+- `BadgeGrid` zeigt statt eines Dialogs eine Inline-Fehlerbox — die Komponente wird im
+  Männerprofil mehrfach gerendert, dort wären Dialoge aufdringlich. Vorher hätte ein Fehler
+  dort ausgesehen wie „alle Badges noch nicht verdient"
+- Bewusst ohne Meldung bleiben nur drei Stellen, jeweils im Code begründet: das Aufräumen
+  alter Avatare (Foto ist bereits gesetzt, nicht behebbar), die Zeitzonen-Meldung (Server
+  fällt auf `Europe/Berlin` zurück) und die beiden `signOut`-Aufrufe
+
+### Dabei mitgefundene Fehler
+- `openGroup` lud `avatar_url` gar nicht mit — in der Mitgliederliste und der Partner-Auswahl
+  beim Punktevergeben erschienen deshalb **immer** nur Initialen statt des Fotos
+- `handleCreateGroup` ignorierte den Fehler beim Eintragen der Erstellerin als Mitglied: die
+  Gruppe wäre angelegt worden, die Erstellerin aber kein Mitglied und hätte sie nach dem
+  nächsten Login nicht mehr gesehen
+- `loadRankingForGroup` und `openGroup` führten mehrere unabhängige Abfragen nacheinander
+  aus; jetzt laufen sie parallel, und die Schleife für neue Gruppen-Mitgliedschaften ist ein
+  Bulk-Insert statt N Einzelaufrufe

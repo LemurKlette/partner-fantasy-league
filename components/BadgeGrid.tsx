@@ -37,21 +37,33 @@ export default function BadgeGrid({
 }) {
   const [badges, setBadges] = useState<BadgeDisplay[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => { load(); }, [partnerId]);
 
   async function load() {
     setLoading(true);
+    setLoadError(null);
     // Punktesummen kommen ueber eine RPC statt direkt aus point_entries:
     // Maenner sind nicht in group_members und duerfen die Tabelle deshalb
     // nicht lesen -- ausserdem bleiben so die Notizen der Frauen privat.
-    const [{ data: allBadges }, { data: earnedRows }, { data: totals }] = await Promise.all([
+    const [{ data: allBadges, error: e1 }, { data: earnedRows, error: e2 }, { data: totals, error: e3 }] = await Promise.all([
       supabase.from('badges')
         .select('id, name, icon_key, image_url, badge_type, tier, trigger_type, trigger_value, category_filter, is_hidden')
         .order('sort_order'),
       supabase.from('partner_badges').select('badge_id').eq('partner_id', partnerId),
       supabase.rpc('partner_point_totals', { p_partner_id: partnerId }),
     ]);
+
+    // Ohne diese Pruefung wuerden alle Badges als gesperrt mit 0 Fortschritt
+    // erscheinen -- optisch nicht von "noch nichts verdient" zu unterscheiden.
+    const err = e1 ?? e2 ?? e3;
+    if (err) {
+      setLoadError(err.message);
+      setBadges([]);
+      setLoading(false);
+      return;
+    }
 
     const catTotals: Record<string, number> = {};
     let totalPoints = 0;
@@ -78,6 +90,15 @@ export default function BadgeGrid({
   }
 
   if (loading) return <ActivityIndicator color={COLORS.terracotta} style={{ marginVertical: 20 }} />;
+
+  if (loadError) {
+    return (
+      <View style={s.errorBox}>
+        <Text style={s.errorTitle}>Badges konnten nicht geladen werden</Text>
+        <Text style={s.errorText}>{loadError}</Text>
+      </View>
+    );
+  }
 
   const grouped: Record<number, BadgeDisplay[]> = {};
   badges.forEach(b => { (grouped[b.badge_type] ??= []).push(b); });
@@ -125,4 +146,14 @@ const s = StyleSheet.create({
     letterSpacing: 1,
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  errorBox: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.terracotta,
+    borderRadius: 12,
+    padding: 16,
+    gap: 4,
+  },
+  errorTitle: { fontSize: 14, fontWeight: '600', color: COLORS.terracotta },
+  errorText: { fontSize: 13, color: COLORS.inkSoft },
 });

@@ -114,6 +114,23 @@ function getStartDate(period: Period): string {
   }
 }
 
+// Zentrale Fehlermeldung fuer fehlgeschlagene Abfragen. Ohne sie endete
+// jeder Fehler in einer leeren Liste, ohne jeden Hinweis auf die Ursache.
+// Gibt true zurueck, wenn ein Fehler vorlag -- Aufrufer brechen damit ab.
+let lastErrorAlertAt = 0;
+function failed(title: string, error: { message: string } | null | undefined): boolean {
+  if (!error) return false;
+  // Bei parallelen Abfragen (z.B. Ranking + Log + Badges) schlagen im
+  // Offline-Fall alle gleichzeitig fehl. Nur die erste Meldung zeigen,
+  // sonst stapeln sich mehrere Dialoge uebereinander.
+  const now = Date.now();
+  if (now - lastErrorAlertAt > 1500) {
+    lastErrorAlertAt = now;
+    Alert.alert(title, error.message);
+  }
+  return true;
+}
+
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
   if (seconds < 60) return 'gerade eben';
@@ -192,21 +209,29 @@ export default function App() {
 
   async function loadUserData(session: Session) {
     reportDeviceTimezone();
-    const { data: pts } = await supabase.from('partners').select('id, name, avatar_url')
+    const { data: pts, error: ptsErr } = await supabase.from('partners').select('id, name, avatar_url')
       .eq('owner_user_id', session.user.id).order('created_at');
+    // Ohne Abbruch wuerde ein Fehler hier faelschlich als "noch kein
+    // Partner vorhanden" gedeutet und die Onboarding-Auswahl zeigen.
+    // Bei einem Fehler geht es zum Login-Screen: die Sitzung bleibt gueltig,
+    // ein erneuter Anlauf laedt die Daten nochmal -- ein stehenbleibender
+    // Ladekreis waere die schlechtere Alternative.
+    if (failed('Verbindung fehlgeschlagen', ptsErr)) { setScreen('auth'); return; }
     const p = (pts ?? [])[0] ?? null;
     if (p) { setPartner(p); await loadGroups(session); return; }
-    const { data: conns } = await supabase.from('partner_connections')
+    const { data: conns, error: connErr } = await supabase.from('partner_connections')
       .select('id').eq('man_user_id', session.user.id).is('disconnected_at', null).limit(1);
+    if (failed('Verbindung fehlgeschlagen', connErr)) { setScreen('auth'); return; }
     if (conns && conns.length > 0) { await loadManProfile(session.user.id); return; }
     setScreen('onboarding-choice');
   }
 
   async function loadManProfile(userId: string) {
-    const { data } = await supabase.from('partner_connections')
+    const { data, error } = await supabase.from('partner_connections')
       .select('id, invite_code, connected_at, partners(id, name, avatar_url)')
       .eq('man_user_id', userId)
       .is('disconnected_at', null);
+    if (failed('Verbindungen konnten nicht geladen werden', error)) return;
     // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
     setManConnections((data ?? []) as unknown as ManConnection[]);
     setScreen('man-profile');
@@ -235,8 +260,9 @@ export default function App() {
   }
 
   async function loadGroups(session: Session) {
-    const { data } = await supabase.from('group_members').select('groups(id, name, invite_code, created_by)')
+    const { data, error } = await supabase.from('group_members').select('groups(id, name, invite_code, created_by)')
       .eq('user_id', session.user.id);
+    if (failed('Gruppen konnten nicht geladen werden', error)) return;
     const gs = ((data ?? []) as any[]).map(r => r.groups).filter(Boolean) as Group[];
     setGroups(gs);
     setScreen('groups');
@@ -245,12 +271,14 @@ export default function App() {
 
   async function loadGroupAvatarPreviews(groupIds: string[]) {
     if (groupIds.length === 0) { setGroupAvatarsMap({}); return; }
-    const [{ data: memberRows }, { data: memberships }] = await Promise.all([
+    const [{ data: memberRows, error: e1 }, { data: memberships, error: e2 }] = await Promise.all([
       supabase.from('group_members').select('group_id, user_id').in('group_id', groupIds),
       supabase.from('group_partner_memberships').select('group_id, partner_id, active').in('group_id', groupIds),
     ]);
+    if (failed('Gruppenbilder konnten nicht geladen werden', e1 ?? e2)) return;
     const userIds = Array.from(new Set((memberRows ?? []).map((m: any) => m.user_id)));
-    const { data: partnerRows } = await supabase.from('partners').select('id, name, avatar_url, owner_user_id').in('owner_user_id', userIds);
+    const { data: partnerRows, error: e3 } = await supabase.from('partners').select('id, name, avatar_url, owner_user_id').in('owner_user_id', userIds);
+    if (failed('Gruppenbilder konnten nicht geladen werden', e3)) return;
     const activeMap = new Map<string, boolean>();
     (memberships ?? []).forEach((m: any) => activeMap.set(`${m.group_id}:${m.partner_id}`, m.active));
 
@@ -268,15 +296,19 @@ export default function App() {
 
   async function loadRankingForGroup(groupId: string, p: Period) {
     setRankingLoading(true);
-    const { data: memberRows } = await supabase.from('group_members').select('user_id').eq('group_id', groupId);
+    const { data: memberRows, error: e1 } = await supabase.from('group_members').select('user_id').eq('group_id', groupId);
+    if (failed('Ranking konnte nicht geladen werden', e1)) { setRankingLoading(false); return; }
     const userIds = (memberRows ?? []).map((m: any) => m.user_id);
-    const { data: partnerRows } = await supabase.from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds);
-    const { data: memberships } = await supabase.from('group_partner_memberships')
-      .select('partner_id, active').eq('group_id', groupId).eq('active', true);
+    const [{ data: partnerRows, error: e2 }, { data: memberships, error: e3 }, { data: entries, error: e4 }] = await Promise.all([
+      supabase.from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds),
+      supabase.from('group_partner_memberships')
+        .select('partner_id, active').eq('group_id', groupId).eq('active', true),
+      supabase.from('point_entries').select('partner_id, points')
+        .eq('group_id', groupId).gte('created_at', getStartDate(p)),
+    ]);
+    if (failed('Ranking konnte nicht geladen werden', e2 ?? e3 ?? e4)) { setRankingLoading(false); return; }
     const activeIds = new Set((memberships ?? []).map((m: any) => m.partner_id));
     const activePartners = ((partnerRows ?? []) as any[]).filter(pr => activeIds.has(pr.id));
-    const { data: entries } = await supabase.from('point_entries').select('partner_id, points')
-      .eq('group_id', groupId).gte('created_at', getStartDate(p));
     const totals: Record<string, number> = {};
     (entries ?? []).forEach((e: any) => { totals[e.partner_id] = (totals[e.partner_id] || 0) + e.points; });
     setRanking(activePartners
@@ -286,9 +318,10 @@ export default function App() {
   }
 
   async function loadEarnedBadges(groupId: string) {
-    const { data } = await supabase.from('partner_badges')
+    const { data, error } = await supabase.from('partner_badges')
       .select('partner_id, badges(icon_key, name, category_filter)')
       .eq('group_id', groupId);
+    if (failed('Badges konnten nicht geladen werden', error)) return;
     setEarnedBadges(((data ?? []) as any[]).map(r => ({
       partner_id: r.partner_id,
       icon_key: (r.badges as any)?.icon_key ?? null,
@@ -316,13 +349,16 @@ export default function App() {
   // Typ 1/2/3/5 sind partnerweite Erfolge. Nur Typ 4 (Saisontitel) ist pro
   // Gruppe und wird serverseitig per pg_cron vergeben (siehe award_period_title).
   async function checkAndAwardBadges(partnerId: string, groupId: string) {
-    const [{ data: allBadges }, { data: earnedRows }, { data: allEntriesRaw }] = await Promise.all([
+    const [{ data: allBadges, error: e1 }, { data: earnedRows, error: e2 }, { data: allEntriesRaw, error: e3 }] = await Promise.all([
       supabase.from('badges').select('*').neq('badge_type', 4),
       supabase.from('partner_badges').select('badge_id, period_key').eq('partner_id', partnerId),
       supabase.from('point_entries')
         .select('points, created_at, without_request, point_categories(name, category_tag, tier, is_global)')
         .eq('partner_id', partnerId),
     ]);
+    // Ohne Abbruch wuerden bei einem Fehler alle Zaehler als 0 gelesen und
+    // dadurch faelschlich keine Badges vergeben.
+    if (failed('Badge-Prüfung fehlgeschlagen', e1 ?? e2 ?? e3)) return;
     const allEntries = (allEntriesRaw ?? []) as any[];
     const earnedIds = new Set((earnedRows ?? []).map((b: any) => b.badge_id));
     const earnedPeriodKeys = new Set((earnedRows ?? []).map((b: any) => `${b.badge_id}:${b.period_key ?? ''}`));
@@ -425,9 +461,10 @@ export default function App() {
   }
 
   async function loadActivityLog(groupId: string) {
-    const { data } = await supabase.from('point_entries')
+    const { data, error } = await supabase.from('point_entries')
       .select('id, points, created_at, note, created_by, capped_reason, partners(name), point_categories(name, icon_key, category_tag)')
       .eq('group_id', groupId).order('created_at', { ascending: false }).limit(10);
+    if (failed('Aktivitäten konnten nicht geladen werden', error)) return;
     // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
     setActivityLog((data ?? []) as unknown as ActivityEntry[]);
   }
@@ -436,26 +473,34 @@ export default function App() {
     setSelectedGroup(group);
     setMembersExpanded(false);
     setLoading(true);
-    const { data: memberRows } = await supabase.from('group_members').select('user_id').eq('group_id', group.id);
+    const { data: memberRows, error: e1 } = await supabase.from('group_members').select('user_id').eq('group_id', group.id);
+    if (failed('Gruppe konnte nicht geladen werden', e1)) { setLoading(false); return; }
     const userIds = (memberRows ?? []).map((m: any) => m.user_id);
-    const { data: partnerRows } = await supabase.from('partners').select('id, name, owner_user_id').in('owner_user_id', userIds);
 
-    // Meine eigenen Partner laden (alle, nicht nur den ersten)
-    const { data: myPts } = await supabase.from('partners').select('id, name')
-      .eq('owner_user_id', session!.user.id).order('created_at');
+    const [{ data: partnerRows, error: e2 }, { data: myPts, error: e3 }, { data: memberships, error: e4 }] = await Promise.all([
+      // avatar_url muss mitgeladen werden, sonst zeigen Mitgliederliste und
+      // Partner-Auswahl immer nur die Initialen statt des Fotos.
+      supabase.from('partners').select('id, name, avatar_url, owner_user_id').in('owner_user_id', userIds),
+      // Meine eigenen Partner (alle, nicht nur den ersten)
+      supabase.from('partners').select('id, name, avatar_url')
+        .eq('owner_user_id', session!.user.id).order('created_at'),
+      supabase.from('group_partner_memberships')
+        .select('partner_id, active').eq('group_id', group.id),
+    ]);
+    if (failed('Gruppe konnte nicht geladen werden', e2 ?? e3 ?? e4)) { setLoading(false); return; }
+
     const myPtsList = (myPts ?? []) as Partner[];
     setMyAllPartners(myPtsList);
 
-    // Partner-Mitgliedschaften laden
-    const { data: memberships } = await supabase.from('group_partner_memberships')
-      .select('partner_id, active').eq('group_id', group.id);
     const membershipMap = new Map<string, boolean>((memberships ?? []).map((m: any) => [m.partner_id, m.active as boolean]));
 
     // Neue Partner automatisch registrieren (die noch keinen Eintrag haben)
     const unregistered = myPtsList.map(p => p.id).filter(id => !membershipMap.has(id));
-    for (const pid of unregistered) {
-      await supabase.from('group_partner_memberships').insert({ group_id: group.id, partner_id: pid, active: true });
-      membershipMap.set(pid, true);
+    if (unregistered.length > 0) {
+      const { error: insertErr } = await supabase.from('group_partner_memberships')
+        .insert(unregistered.map(pid => ({ group_id: group.id, partner_id: pid, active: true })));
+      if (failed('Partner konnte der Gruppe nicht hinzugefügt werden', insertErr)) { setLoading(false); return; }
+      unregistered.forEach(pid => membershipMap.set(pid, true));
     }
 
     setGroupPartnerMemberships(Array.from(membershipMap.entries()).map(([partner_id, active]) => ({ partner_id, active })));
@@ -642,7 +687,15 @@ export default function App() {
       .select('id, name, invite_code, created_by').single();
     if (error) { Alert.alert('Fehler', error.message); }
     else {
-      await supabase.from('group_members').insert({ group_id: data.id, user_id: session!.user.id });
+      // Schlaegt das fehl, existiert die Gruppe zwar, die Erstellerin waere
+      // aber kein Mitglied und saehe sie nach dem naechsten Login nicht mehr.
+      const { error: memberErr } = await supabase.from('group_members')
+        .insert({ group_id: data.id, user_id: session!.user.id });
+      if (memberErr) {
+        Alert.alert('Fehler', `Die Gruppe wurde angelegt, du konntest ihr aber nicht beitreten: ${memberErr.message}`);
+        setLoading(false);
+        return;
+      }
       setGroups(prev => [...prev, data]);
       setGroupName('');
       setScreen('groups');
@@ -744,11 +797,14 @@ export default function App() {
   }
 
   async function loadProfileData() {
-    const { data: pts } = await supabase.from('partners')
+    const { data: pts, error: e1 } = await supabase.from('partners')
       .select('id, name, avatar_url').eq('owner_user_id', session!.user.id).order('created_at');
+    // Ohne Abbruch wuerde ein Fehler hier wie "keine Partner vorhanden" wirken.
+    if (failed('Profil konnte nicht geladen werden', e1)) return;
     if (!pts || pts.length === 0) { setMyPartners([]); return; }
-    const { data: conns } = await supabase.from('partner_connections')
+    const { data: conns, error: e2 } = await supabase.from('partner_connections')
       .select('partner_id, invite_code').in('partner_id', pts.map((p: any) => p.id));
+    if (failed('Einladungscodes konnten nicht geladen werden', e2)) return;
     const codeMap: Record<string, string> = {};
     (conns ?? []).forEach((c: any) => { codeMap[c.partner_id] = c.invite_code; });
     const nameMap: Record<string, string> = {};
@@ -819,6 +875,9 @@ export default function App() {
     // Erst nach erfolgreichem Update aufraeumen, damit nie die gerade
     // referenzierte Datei geloescht wird. Ohne das bleibt bei jedem
     // Fotowechsel das alte Bild dauerhaft im Bucket liegen.
+    // Bewusst ohne Fehlermeldung: das Foto ist an dieser Stelle bereits
+    // gesetzt, ein misslungenes Aufraeumen hinterlaesst nur eine
+    // verwaiste Datei und ist fuer die Nutzerin nicht behebbar.
     const { data: existing } = await supabase.storage.from('avatars').list(partnerId);
     const stale = (existing ?? []).filter(f => f.name !== fileName).map(f => `${partnerId}/${f.name}`);
     if (stale.length > 0) await supabase.storage.from('avatars').remove(stale);
