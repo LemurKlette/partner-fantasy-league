@@ -513,3 +513,25 @@ Partner kann also auf zwei Wegen aus dem Ranking verschwinden. Ich habe ihn bewu
 entfernt (er funktioniert weiter als manuelles Ausblenden), die Liste zeigt jetzt aber nur
 noch Partner, die tatsächlich in der Gruppe sind. Ob der Schalter bleiben soll, ist eine
 Produktentscheidung.
+
+## Bugfix: Anti-Farming-Regeln galten gruppenübergreifend (2026-08-07)
+- **Fehler:** Beide Regeln in `apply_point_entry_rules()` filterten nur auf `partner_id`,
+  nicht auf `group_id`. Hatte ein Partner in Gruppe A am selben Tag schon 62 Punkte, blieben
+  in Gruppe B nur noch 18 übrig. Dieselbe Aufgabe zählte in Gruppe B außerdem nur halb, wenn
+  sie vorher schon in Gruppe A eingetragen war
+- **Betroffen waren beide Regeln**, nicht nur das Tageslimit — die abnehmende Wertung hatte
+  denselben Fehler
+- **Fix:** `and group_id = NEW.group_id` in beiden WHERE-Klauseln. Gruppen sind unabhängige
+  Ranglisten mit unterschiedlichen Freundeskreisen; Verbrauch in der einen darf die
+  Vergleichbarkeit in der anderen nicht beeinflussen
+- **Zeitzone war bereits korrekt:** Die Tagesgrenze läuft über `profiles.timezone` der
+  eintragenden Nutzerin (Rückfall `Europe/Berlin`), nicht über UTC — unverändert
+- Hilfe-Seite und FAQ nachgezogen, sie beschrieben noch das gruppenübergreifende Verhalten
+- Migration: `supabase/migrations/20260804_30_anti_farming_per_group.sql`
+
+### Gemeldet, nicht geändert: Badge-Punkte werden global summiert
+`partner_point_totals()` (Fortschrittsbalken) und `checkAndAwardBadges()` (Vergabe) filtern
+beide nur auf `partner_id`, ohne `group_id` — Meilensteine und Kategorie-Spezialisten zählen
+also über alle Gruppen zusammen. Mit dem jetzt gruppenweisen Tageslimit kann ein Partner in
+drei Gruppen an einem Tag bis zu 240 Punkte aufs globale Badge-Konto bekommen, während einer
+mit nur einer Gruppe bei 80 bleibt. Bewusst unverändert gelassen — Entscheidung steht aus.
