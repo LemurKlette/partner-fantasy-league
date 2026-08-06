@@ -70,6 +70,15 @@ function catColors(tag: string | null | undefined) {
   return CATEGORY_COLORS[(key ?? 'custom') as CategoryKey];
 }
 
+// Badges ohne Kategorie (Meilensteine, Konsistenz, Saisontitel) behalten
+// laut Design-Konzept den Ocker-Ton -- anders als Aufgaben-Kategorien, wo
+// "keine Kategorie" gleichbedeutend mit "selbst erstellt" ist. Deshalb ein
+// eigener Rueckfallwert statt catColors().
+function badgeColors(categoryFilter: string | null | undefined) {
+  const key = categoryFilter ? CATEGORY_TAG_TO_KEY[categoryFilter] : undefined;
+  return CATEGORY_COLORS[(key ?? 'household') as CategoryKey];
+}
+
 // Kategorie-Icon im farbigen Kreis (Aufgabenlisten, Aktivitaetslog)
 function CategoryIcon({ tag, iconKey, size = ICON_SIZE.category, circle = 40 }: {
   tag: string | null | undefined;
@@ -1220,7 +1229,7 @@ export default function App() {
                                   key={`${b.name}-${bi}`}
                                   name={iconFor(b.icon_key) as any}
                                   size={16}
-                                  color={catColors(b.category_filter).stroke}
+                                  color={badgeColors(b.category_filter).stroke}
                                 />
                               ))}
                             </View>

@@ -464,3 +464,21 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
   wächst um ein Drittel. Genau das gewünschte „mehr Luft ums Icon"
 - Die Logik sitzt bewusst in `BadgeFrame`, weil sie von der Rahmenform abhängt — so bleibt
   sie auch gültig, wenn später weitere Formen dazukommen
+
+---
+
+# Eigene Kategorien in Grau + Ranking nur mit Punkten (2026-08-07)
+
+## Schritt 1 – Farbe für eigene Kategorien auf Grau geändert
+- `CATEGORY_COLORS.custom` von Taupe (`#8B7355`/`#F5E6D3`) auf Grau
+  (`#6B6B6B`/`#F0F0F0`) umgestellt
+- Die Verkabelung bestand bereits: `catColors()` ist der einzige Punkt, an dem eine
+  Kategoriefarbe ermittelt wird, und fällt auf `custom` zurück. Damit greift die Farbe
+  automatisch beim Punktevergeben, im Aktivitätslog und in der Kategorien-Verwaltung —
+  ohne Sonderbehandlung an den einzelnen Stellen
+- `BadgeFrame` akzeptiert `'custom'` ebenfalls automatisch, da `CategoryKey` aus
+  `CATEGORY_COLORS` abgeleitet wird
+- **Dabei behobene Inkonsistenz:** `catColors()` wurde auch für die Badge-Icons in der
+  Ranking-Zeile verwendet. Badges ohne Kategorie hätten damit Grau bekommen, während
+  `BadgeFrame` sie laut Design-Konzept ockerfarben zeichnet. Neue Funktion `badgeColors()`
+  mit Ocker-Rückfall trennt die beiden Fälle sauber
