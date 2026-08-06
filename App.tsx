@@ -520,6 +520,7 @@ export default function App() {
     const { data: cats } = await supabase.from('point_categories')
       .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
       .or(`is_global.eq.true,group_id.eq.${selectedGroup!.id}`)
+      .is('archived_at', null)
       .order('name');
     setCategories((cats ?? []) as Category[]);
   }
@@ -528,7 +529,7 @@ export default function App() {
     setLoading(true);
     const { data: customCats } = await supabase.from('point_categories')
       .select('id, name, points, icon_key, is_global, tier, multiplier_eligible, category_tag')
-      .eq('group_id', selectedGroup!.id).order('name');
+      .eq('group_id', selectedGroup!.id).is('archived_at', null).order('name');
     setGroupCustomCats((customCats ?? []) as Category[]);
     setLoading(false);
     setScreen('manage-categories');
@@ -552,7 +553,10 @@ export default function App() {
     Alert.alert('Kategorie löschen', `"${catName}" wirklich löschen? Vergangene Einträge bleiben erhalten.`, [
       { text: 'Abbrechen', style: 'cancel' },
       { text: 'Löschen', style: 'destructive', onPress: async () => {
-        const { error } = await supabase.from('point_categories').delete().eq('id', catId);
+        // Wurden fuer die Kategorie bereits Punkte vergeben, wird sie
+        // serverseitig archiviert statt geloescht -- sonst scheitert das
+        // Loeschen an den referenzierenden Eintraegen.
+        const { error } = await supabase.rpc('delete_custom_category', { p_category_id: catId });
         if (error) Alert.alert('Fehler', error.message);
         else setGroupCustomCats(prev => prev.filter(c => c.id !== catId));
       }},

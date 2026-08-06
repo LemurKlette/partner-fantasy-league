@@ -348,3 +348,15 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
   (`capped_reason`) statt pauschal „Tageslimit erreicht"
 - Hilfe-Seite und FAQ an die neuen Regeln angepasst (feste Punktwerte, Kappung,
   Zeitzone, Gruppe verlassen)
+
+## Fix: Eigene Kategorie löschen schlug fehl, sobald Punkte vergeben waren (2026-08-06)
+- `point_entries.category_id` verweist ohne `on delete` auf `point_categories` — das Löschen
+  einer bereits genutzten eigenen Kategorie endete in einer Fremdschlüsselverletzung, obwohl
+  der Dialog „Vergangene Einträge bleiben erhalten" verspricht
+- Neue Spalte `point_categories.archived_at` und RPC `delete_custom_category(id)`:
+  nie genutzte Kategorien werden weiterhin hart gelöscht, bereits genutzte werden archiviert
+- Archivierte Kategorien verschwinden aus allen Auswahllisten (`archived_at is null`-Filter
+  in `loadCategories` und `loadManageCategories`), bleiben im Aktivitätslog aber mit Name
+  und Icon sichtbar — das Versprechen des Dialogs stimmt damit jetzt
+- Die RPC prüft serverseitig Gruppenzugehörigkeit und lehnt Standard-Aufgaben ab
+- Migration: `supabase/migrations/20260804_27_archive_custom_categories.sql`
