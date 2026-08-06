@@ -47,7 +47,15 @@ export function frameColors(category: CategoryKey | null, locked: boolean) {
   return { fill: c.fill, stroke: c.stroke, icon: c.stroke };
 }
 
-export default function BadgeFrame({ tier, category, locked, size = 46 }: BadgeFrameProps) {
+// Ein Stern hat deutlich weniger nutzbare Innenflaeche als ein Kreis: die
+// Zacken zaehlen zwar zur Bounding-Box, tragen aber nichts zum Platz in der
+// Mitte bei. Deshalb faellt das Icon in Sternen kleiner aus, sonst ragt es
+// in die Zacken und stoert die Form optisch.
+export function iconSizeFor(tier: BadgeTier, size: number): number {
+  return Math.round(size * (tier ? 0.38 : 0.46));
+}
+
+export default function BadgeFrame({ tier, category, locked, size = 62 }: BadgeFrameProps) {
   const { fill, stroke } = frameColors(category, locked);
   const points = tier ? STAR_BY_TIER[tier] : null;
 

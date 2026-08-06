@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import BadgeFrame, { frameColors, type BadgeTier } from './BadgeFrame';
+import BadgeFrame, { frameColors, iconSizeFor, type BadgeTier } from './BadgeFrame';
 import { COLORS, type CategoryKey } from '../theme/colors';
 import { iconFor } from '../theme/icons';
 
@@ -43,7 +43,7 @@ export default function Badge({
   isHidden = false,
   progressCurrent = null,
   progressTarget = null,
-  size = 46,
+  size = 62,
   surroundingColor = COLORS.surface,
   width,
   onPress,
@@ -53,7 +53,7 @@ export default function Badge({
 
   const locked = !earned;
   const { icon: iconColor } = frameColors(category, locked);
-  const iconSize = Math.round(size * 0.52);
+  const iconSize = iconSizeFor(tier, size);
 
   const showProgress =
     !earned && progressCurrent != null && progressTarget != null && progressTarget > 0;

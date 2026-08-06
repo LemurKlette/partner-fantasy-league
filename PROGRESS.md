@@ -453,3 +453,14 @@ App-Logik wurden folgende Punkte behoben. Migration: `20260804_25_security_fixes
 - Die Spalte heißt weiterhin `without_request` (nicht `is_unprompted`): sie wird bereits von
   der Badge-Logik für „Der Hellseher" ausgewertet, eine Umbenennung hätte nur Risiko ohne
   Gewinn gebracht
+
+## Schritt 5 – Badge-Rahmen vergrößert, Icons stören die Zacken nicht mehr
+- Standardgröße eines Badges von 46 auf 62 px erhöht
+- Neue Funktion `iconSizeFor(tier, size)` in `BadgeFrame.tsx`: Sterne bekommen ein
+  kleineres Verhältnis (0,38) als Kreise (0,46). Grund: die Zacken zählen zur Bounding-Box,
+  tragen aber nichts zur nutzbaren Fläche in der Mitte bei — ein einheitliches Verhältnis
+  ließ die Icons deshalb immer in die Zacken ragen
+- Ergebnis: das Icon in Sternen bleibt bei exakt 24 px wie vorher, der Rahmen drumherum
+  wächst um ein Drittel. Genau das gewünschte „mehr Luft ums Icon"
+- Die Logik sitzt bewusst in `BadgeFrame`, weil sie von der Rahmenform abhängt — so bleibt
+  sie auch gültig, wenn später weitere Formen dazukommen
