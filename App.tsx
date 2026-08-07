@@ -16,7 +16,10 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
+import NetInfo from '@react-native-community/netinfo';
 import { supabase } from './lib/supabase';
+import { CACHE_KEYS, cacheClearForUser, cacheGet, cacheSet } from './lib/cache';
+import { enqueue, flushQueue, isNetworkError, readQueue, type PendingEntry } from './lib/offline-queue';
 import type { Session } from '@supabase/supabase-js';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BadgeGrid from './components/BadgeGrid';
@@ -143,8 +146,13 @@ function getStartDate(period: Period): string {
 // jeder Fehler in einer leeren Liste, ohne jeden Hinweis auf die Ursache.
 // Gibt true zurueck, wenn ein Fehler vorlag -- Aufrufer brechen damit ab.
 let lastErrorAlertAt = 0;
+// Wird vom NetInfo-Listener gepflegt. Ohne Netz erklaert das Banner oben
+// bereits, was los ist -- ein Dialog mit "Network request failed" waere
+// dann nur laut und ohne Mehrwert.
+let deviceOffline = false;
 function failed(title: string, error: { message: string } | null | undefined): boolean {
   if (!error) return false;
+  if (deviceOffline || isNetworkError(error)) return true;
   // Bei parallelen Abfragen (z.B. Ranking + Log + Badges) schlagen im
   // Offline-Fall alle gleichzeitig fehl. Nur die erste Meldung zeigen,
   // sonst stapeln sich mehrere Dialoge uebereinander.
@@ -209,6 +217,8 @@ export default function App() {
   const [newCatIconKey, setNewCatIconKey] = useState<IconKey>('helpCustomCategory');
   const [withoutRequest, setWithoutRequest] = useState(false);
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
+  const [isOffline, setIsOffline] = useState(false);
+  const [pendingEntries, setPendingEntries] = useState<PendingEntry[]>([]);
   const [helpTab, setHelpTab] = useState<'frauen' | 'maenner' | 'faq'>('frauen');
   const [helpReturnScreen, setHelpReturnScreen] = useState<Screen>('groups');
   const [generatedPartnerCode, setGeneratedPartnerCode] = useState('');
@@ -247,7 +257,58 @@ export default function App() {
       if (session) { setSession(session); loadUserData(session); }
       else setScreen('auth');
     });
+    readQueue().then(setPendingEntries);
   }, []);
+
+  // Verbindungsstatus verfolgen und die Warteschlange abarbeiten, sobald
+  // das Netz zurueck ist. isInternetReachable unterscheidet sich von
+  // isConnected: im WLAN ohne funktionierende Verbindung (Hotel-Login,
+  // Router ohne Uplink) ist isConnected true, erreichbar ist trotzdem
+  // nichts. Nur null bedeutet "noch nicht ermittelt" und zaehlt als online,
+  // damit beim Start nicht faelschlich das Banner aufblitzt.
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const online = state.isConnected !== false && state.isInternetReachable !== false;
+      deviceOffline = !online;
+      setIsOffline(!online);
+      if (online) syncPendingEntries();
+    });
+    return () => unsubscribe();
+  }, [selectedGroup, period]);
+
+  // Uebertraegt wartende Punktevergaben. Wird beim Verbindungsaufbau und
+  // nach dem manuellen Antippen des Banners aufgerufen.
+  async function syncPendingEntries() {
+    const queued = await readQueue();
+    if (queued.length === 0) return;
+
+    const result = await flushQueue();
+    setPendingEntries(await readQueue());
+
+    if (result.rejected.length > 0) {
+      // Endgueltig abgelehnt (z.B. Kategorie inzwischen archiviert, Gruppe
+      // geloescht). Erneutes Senden wuerde genauso scheitern, deshalb sind
+      // sie aus der Warteschlange raus -- die Nutzerin muss es aber erfahren,
+      // sonst fehlen die Punkte kommentarlos.
+      const list = result.rejected
+        .map(r => `• ${r.entry.category_name} für ${r.entry.partner_name}: ${r.message}`)
+        .join('\n');
+      Alert.alert(
+        result.rejected.length === 1 ? 'Ein Eintrag konnte nicht übertragen werden' : 'Einträge konnten nicht übertragen werden',
+        `${list}\n\nBitte trag sie bei Bedarf noch einmal ein.`,
+      );
+    }
+
+    // Erst nach dem Uebertragen neu laden: vorher stuenden die Punkte des
+    // gerade gesendeten Eintrags noch nicht in der Antwort.
+    if (result.sent > 0 && selectedGroup) {
+      await Promise.all([
+        loadRankingForGroup(selectedGroup.id, period),
+        loadActivityLog(selectedGroup.id),
+        loadEarnedBadges(selectedGroup.id),
+      ]);
+    }
+  }
 
   // Zeitzone des Geraets an den Server melden. Die Anti-Farming-Regeln
   // brauchen sie, um die Tagesgrenze richtig zu ziehen (vorher lief das
@@ -265,16 +326,30 @@ export default function App() {
     reportDeviceTimezone();
     const { data: pts, error: ptsErr } = await supabase.from('partners').select('id, name, avatar_url')
       .eq('owner_user_id', session.user.id).order('created_at');
-    // Ohne Abbruch wuerde ein Fehler hier faelschlich als "noch kein
-    // Partner vorhanden" gedeutet und die Onboarding-Auswahl zeigen.
-    // Bei einem Fehler geht es zum Login-Screen: die Sitzung bleibt gueltig,
-    // ein erneuter Anlauf laedt die Daten nochmal -- ein stehenbleibender
-    // Ladekreis waere die schlechtere Alternative.
-    if (failed('Verbindung fehlgeschlagen', ptsErr)) { setScreen('auth'); return; }
+    if (ptsErr) {
+      // Ohne Netz in den letzten bekannten Stand starten statt auf den
+      // Login-Screen zu werfen. Die Sitzung ist ja gueltig.
+      const cached = await cacheGet<Partner[]>(session.user.id, CACHE_KEYS.partners);
+      if (cached && cached.length > 0) {
+        setMyAllPartners(cached);
+        setPartner(cached[0]);
+        await loadGroups(session);
+        return;
+      }
+      // Ohne Abbruch wuerde ein Fehler hier faelschlich als "noch kein
+      // Partner vorhanden" gedeutet und die Onboarding-Auswahl zeigen.
+      // Bei einem Fehler geht es zum Login-Screen: die Sitzung bleibt gueltig,
+      // ein erneuter Anlauf laedt die Daten nochmal -- ein stehenbleibender
+      // Ladekreis waere die schlechtere Alternative.
+      failed('Verbindung fehlgeschlagen', ptsErr);
+      setScreen('auth');
+      return;
+    }
     // Alle eigenen Partner merken, nicht nur den ersten -- sonst ist die
     // Badge-Seite der uebrigen Partner ueberhaupt nicht erreichbar.
     const myPts = (pts ?? []) as Partner[];
     setMyAllPartners(myPts);
+    cacheSet(session.user.id, CACHE_KEYS.partners, myPts);
     const p = myPts[0] ?? null;
     if (p) { setPartner(p); await loadGroups(session); return; }
     const { data: conns, error: connErr } = await supabase.from('partner_connections')
@@ -324,9 +399,19 @@ export default function App() {
       .select('groups!inner(id, name, invite_code, created_by, deleted_at)')
       .eq('user_id', session.user.id)
       .is('groups.deleted_at', null);
-    if (failed('Gruppen konnten nicht geladen werden', error)) return;
+    if (error) {
+      const cached = await cacheGet<Group[]>(session.user.id, CACHE_KEYS.groups);
+      if (cached) {
+        setGroups(cached);
+        setScreen('groups');
+        loadGroupAvatarPreviews(cached.map(g => g.id));
+        return;
+      }
+      if (failed('Gruppen konnten nicht geladen werden', error)) return;
+    }
     const gs = ((data ?? []) as any[]).map(r => r.groups).filter(Boolean) as Group[];
     setGroups(gs);
+    cacheSet(session.user.id, CACHE_KEYS.groups, gs);
     setScreen('groups');
     loadGroupAvatarPreviews(gs.map(g => g.id));
   }
@@ -390,12 +475,20 @@ export default function App() {
 
   async function loadRankingForGroup(groupId: string, p: Period) {
     setRankingLoading(true);
+    const cacheKey = CACHE_KEYS.ranking(groupId, p);
+    // Bei jedem Fehlerpfad denselben Rueckfall nehmen, damit das Ranking
+    // ohne Netz nicht leer bleibt.
+    const fallback = async () => {
+      const cached = await cacheGet<RankingEntry[]>(session!.user.id, cacheKey);
+      if (cached) setRanking(cached);
+      setRankingLoading(false);
+    };
     // Die Mitgliedschaft entscheidet, wer im Ranking steht -- nicht mehr die
     // Gruppenmitgliedschaft der Nutzerin. Wer keine Punkte hat, hat auch
     // keinen Eintrag und taucht damit gar nicht erst auf.
     const { data: memberships, error: e1 } = await supabase.from('group_partner_memberships')
       .select('partner_id').eq('group_id', groupId).eq('active', true);
-    if (failed('Ranking konnte nicht geladen werden', e1)) { setRankingLoading(false); return; }
+    if (e1) { failed('Ranking konnte nicht geladen werden', e1); await fallback(); return; }
     const partnerIds = (memberships ?? []).map((m: any) => m.partner_id);
     if (partnerIds.length === 0) { setRanking([]); setRankingLoading(false); return; }
 
@@ -404,12 +497,14 @@ export default function App() {
       supabase.from('point_entries').select('partner_id, points')
         .eq('group_id', groupId).gte('created_at', getStartDate(p)),
     ]);
-    if (failed('Ranking konnte nicht geladen werden', e2 ?? e3)) { setRankingLoading(false); return; }
+    if (e2 ?? e3) { failed('Ranking konnte nicht geladen werden', e2 ?? e3); await fallback(); return; }
     const totals: Record<string, number> = {};
     (entries ?? []).forEach((e: any) => { totals[e.partner_id] = (totals[e.partner_id] || 0) + e.points; });
-    setRanking(((partnerRows ?? []) as any[])
+    const result = ((partnerRows ?? []) as any[])
       .map(pr => ({ partner_id: pr.id, name: pr.name, avatar_url: pr.avatar_url, total: totals[pr.id] || 0 }))
-      .sort((a, b) => b.total - a.total));
+      .sort((a, b) => b.total - a.total);
+    setRanking(result);
+    cacheSet(session!.user.id, cacheKey, result);
     setRankingLoading(false);
   }
 
@@ -417,13 +512,19 @@ export default function App() {
     const { data, error } = await supabase.from('partner_badges')
       .select('partner_id, badges(icon_key, name, category_filter)')
       .eq('group_id', groupId);
-    if (failed('Badges konnten nicht geladen werden', error)) return;
-    setEarnedBadges(((data ?? []) as any[]).map(r => ({
+    if (error) {
+      const cached = await cacheGet<EarnedBadge[]>(session!.user.id, CACHE_KEYS.earnedBadges(groupId));
+      if (cached) { setEarnedBadges(cached); return; }
+      if (failed('Badges konnten nicht geladen werden', error)) return;
+    }
+    const badgeList = ((data ?? []) as any[]).map(r => ({
       partner_id: r.partner_id,
       icon_key: (r.badges as any)?.icon_key ?? null,
       name: (r.badges as any)?.name ?? '',
       category_filter: (r.badges as any)?.category_filter ?? null,
-    })));
+    }));
+    setEarnedBadges(badgeList);
+    cacheSet(session!.user.id, CACHE_KEYS.earnedBadges(groupId), badgeList);
   }
 
   function mondayOf(d: Date): Date {
@@ -450,9 +551,15 @@ export default function App() {
     const { data, error } = await supabase.from('point_entries')
       .select('id, points, created_at, note, created_by, capped_reason, without_request, partners(name), point_categories(name, icon_key, category_tag)')
       .eq('group_id', groupId).order('created_at', { ascending: false }).limit(10);
-    if (failed('Aktivitäten konnten nicht geladen werden', error)) return;
+    if (error) {
+      const cached = await cacheGet<ActivityEntry[]>(session!.user.id, CACHE_KEYS.activityLog(groupId));
+      if (cached) { setActivityLog(cached); return; }
+      if (failed('Aktivitäten konnten nicht geladen werden', error)) return;
+    }
     // Supabase typisiert 1:1-Relationen als Array; zur Laufzeit ist es ein Objekt.
-    setActivityLog((data ?? []) as unknown as ActivityEntry[]);
+    const log = (data ?? []) as unknown as ActivityEntry[];
+    setActivityLog(log);
+    cacheSet(session!.user.id, CACHE_KEYS.activityLog(groupId), log);
   }
 
   async function openGroup(group: Group) {
@@ -471,7 +578,27 @@ export default function App() {
       supabase.from('group_partner_memberships')
         .select('partner_id, active').eq('group_id', group.id),
     ]);
-    if (failed('Gruppe konnte nicht geladen werden', e1 ?? e2)) { setLoading(false); return; }
+    if (e1 ?? e2) {
+      // Ohne Netz mit dem letzten bekannten Stand oeffnen. Die Ranking-,
+      // Log- und Badge-Loader unten holen sich ihrerseits den Cache.
+      const cachedPartners = await cacheGet<Partner[]>(session!.user.id, CACHE_KEYS.partners);
+      const cachedMembers = await cacheGet<GroupMember[]>(session!.user.id, CACHE_KEYS.groupMembers(group.id));
+      if (cachedPartners || cachedMembers) {
+        if (cachedPartners) { setMyAllPartners(cachedPartners); setSelectedPartnerIdForPoints(cachedPartners[0]?.id ?? null); }
+        setGroupMembers(cachedMembers ?? []);
+        setGroupPartnerMemberships((cachedMembers ?? [])
+          .filter(m => m.partner)
+          .map(m => ({ partner_id: m.partner!.id, active: true })));
+        setPeriod('week');
+        await Promise.all([loadRankingForGroup(group.id, 'week'), loadActivityLog(group.id), loadEarnedBadges(group.id)]);
+        setScreen('group-detail');
+        setLoading(false);
+        return;
+      }
+      failed('Gruppe konnte nicht geladen werden', e1 ?? e2);
+      setLoading(false);
+      return;
+    }
 
     const myPtsList = (myPts ?? []) as Partner[];
     setMyAllPartners(myPtsList);
@@ -489,10 +616,12 @@ export default function App() {
       const { data: partnerRows, error: e3 } = await supabase.from('partners')
         .select('id, name, avatar_url, owner_user_id').in('id', memberIds);
       if (failed('Gruppe konnte nicht geladen werden', e3)) { setLoading(false); return; }
-      setGroupMembers(((partnerRows ?? []) as any[]).map(p => ({
+      const members = ((partnerRows ?? []) as any[]).map(p => ({
         user_id: p.owner_user_id,
         partner: { id: p.id, name: p.name, avatar_url: p.avatar_url },
-      })));
+      }));
+      setGroupMembers(members);
+      cacheSet(session!.user.id, CACHE_KEYS.groupMembers(group.id), members);
     }
     setPeriod('week');
     await Promise.all([loadRankingForGroup(group.id, 'week'), loadActivityLog(group.id), loadEarnedBadges(group.id)]);
@@ -780,17 +909,61 @@ export default function App() {
     // serverseitig aus der Kategorie abgeleitet und zurueckgegeben.
     const expectedPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
     setLoading(true);
+
+    // Ohne Verbindung gar nicht erst senden, sondern in die Warteschlange.
+    // Der Punktwert bleibt dabei bewusst offen: er entsteht im Trigger und
+    // haengt vom Tagesstand in der Gruppe ab, den das Geraet offline nicht
+    // kennen kann.
+    const queueIt = async () => {
+      const queued = await enqueue({
+        partner_id: effectivePartnerId,
+        partner_name: effectivePartnerName,
+        group_id: selectedGroup!.id,
+        category_id: selectedCategory!.id,
+        category_name: selectedCategory!.name,
+        icon_key: selectedCategory!.icon_key,
+        cat_tag: selectedCategory!.category_tag,
+        note: note.trim() || null,
+        without_request: applyMultiplier,
+      });
+      setPendingEntries(prev => [...prev, queued]);
+      setSelectedCategory(null);
+      setNote('');
+      setWithoutRequest(false);
+      setScreen('group-detail');
+      setLoading(false);
+      Alert.alert(
+        'Ohne Verbindung gespeichert',
+        `"${selectedCategory!.name}" für ${effectivePartnerName} wird übertragen, sobald du wieder online bist. Wie viele Punkte es gibt, entscheidet sich erst dann.`,
+      );
+    };
+
+    if (isOffline) { await queueIt(); return; }
+
     // Ueber die RPC statt direktem Insert: sie legt bei Bedarf die
     // Gruppenzugehoerigkeit des Partners mit an, und zwar atomar -- sonst
     // koennte ein verwaister Eintrag ohne Zugehoerigkeit entstehen.
-    const { data: rows, error } = await supabase.rpc('add_point_entry', {
-      p_partner_id: effectivePartnerId,
-      p_group_id: selectedGroup!.id,
-      p_category_id: selectedCategory.id,
-      p_note: note.trim() || null,
-      p_without_request: applyMultiplier,
-    });
+    let rows: any = null;
+    let error: { message: string } | null = null;
+    try {
+      const res = await supabase.rpc('add_point_entry', {
+        p_partner_id: effectivePartnerId,
+        p_group_id: selectedGroup!.id,
+        p_category_id: selectedCategory.id,
+        p_note: note.trim() || null,
+        p_without_request: applyMultiplier,
+      });
+      rows = res.data;
+      error = res.error;
+    } catch (thrown: any) {
+      // Wirft der Aufruf, statt einen Fehler zurueckzugeben, waere der
+      // Eintrag ohne diesen Zweig verloren.
+      error = { message: String(thrown?.message ?? thrown) };
+    }
     const result = ((rows ?? []) as any[])[0];
+    // Das Netz kann auch weggebrochen sein, ohne dass NetInfo es schon
+    // gemeldet hat -- dann landet der Eintrag hier in der Warteschlange.
+    if (error && isNetworkError(error)) { await queueIt(); return; }
     if (error) Alert.alert('Fehler', error.message);
     else {
       setSelectedCategory(null);
@@ -962,7 +1135,29 @@ export default function App() {
   }
 
   async function handleLogout() {
+    // Warnen statt still verwerfen: die Warteschlange haengt an der
+    // Anmeldung, nach dem Abmelden liesse sie sich nicht mehr uebertragen.
+    if (pendingEntries.length > 0) {
+      Alert.alert(
+        'Es warten noch Einträge',
+        `${pendingEntries.length} ${pendingEntries.length === 1 ? 'Punkteintrag wurde' : 'Punkteinträge wurden'} noch nicht übertragen. Beim Abmelden ${pendingEntries.length === 1 ? 'geht er' : 'gehen sie'} verloren.`,
+        [
+          { text: 'Abbrechen', style: 'cancel' },
+          { text: 'Trotzdem abmelden', style: 'destructive', onPress: doLogout },
+        ],
+      );
+      return;
+    }
+    await doLogout();
+  }
+
+  async function doLogout() {
+    const userId = session?.user.id;
     await supabase.auth.signOut();
+    // Der naechste Login auf demselben Geraet soll nicht kurz die Gruppen
+    // der Vorgaengerin sehen.
+    if (userId) await cacheClearForUser(userId);
+    setPendingEntries([]);
     setSession(null); setPartner(null); setGroups([]);
     setEmail(''); setPassword(''); setScreen('auth');
   }
@@ -992,6 +1187,33 @@ export default function App() {
   }
 
   // ── SCREENS ──────────────────────────────────────────
+
+  // Erklaert den Zustand an einer ruhigen Stelle, statt bei jeder
+  // fehlgeschlagenen Abfrage einen Dialog zu werfen. Antippen versucht
+  // die Warteschlange sofort zu leeren.
+  const offlineBanner = (isOffline || pendingEntries.length > 0) ? (
+    <TouchableOpacity
+      onPress={syncPendingEntries}
+      disabled={isOffline}
+      style={{
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        paddingHorizontal: 16, paddingVertical: 8,
+        backgroundColor: COLORS.sandDeep,
+      }}>
+      <MaterialCommunityIcons
+        name={(isOffline ? ICONS.statusOffline : ICONS.statusPending) as any}
+        size={ICON_SIZE.inline}
+        color={COLORS.inkSoft}
+      />
+      <Text style={{ fontSize: 12, color: COLORS.inkSoft, flex: 1 }}>
+        {isOffline
+          ? pendingEntries.length > 0
+            ? `Keine Verbindung — ${pendingEntries.length} ${pendingEntries.length === 1 ? 'Eintrag wartet' : 'Einträge warten'}`
+            : 'Keine Verbindung — angezeigt wird der letzte Stand'
+          : `${pendingEntries.length} ${pendingEntries.length === 1 ? 'Eintrag wird' : 'Einträge werden'} übertragen — tippen zum Wiederholen`}
+      </Text>
+    </TouchableOpacity>
+  ) : null;
 
   if (screen === 'loading') return (
     <View style={s.center}><ActivityIndicator size="large" color={COLORS.terracotta} /><StatusBar style="auto" /></View>
@@ -1166,6 +1388,7 @@ export default function App() {
           </ScrollView>
         )}
       </View>
+      {offlineBanner}
       {groups.length === 0
         ? <View style={s.center}>
             <MaterialCommunityIcons name={ICONS.emptyState as any} size={40} color={COLORS.inkMuted} style={{ marginBottom: 8 }} />
@@ -1243,6 +1466,8 @@ export default function App() {
           </View>
         </View>
       </View>
+
+      {offlineBanner}
 
       <View style={s.tabs}>
         {(['week', 'month', 'year'] as Period[]).map(p => (
@@ -1322,7 +1547,31 @@ export default function App() {
             }
 
             <Text style={s.sectionLabel}>Letzte Aktivitäten</Text>
-            {activityLog.length === 0
+
+            {/* Wartende Eintraege stehen oben, gedaempft und ohne Punktzahl:
+                die entscheidet der Trigger erst beim Uebertragen. */}
+            {pendingEntries.filter(e => e.group_id === selectedGroup?.id).map(e => (
+              <View key={e.local_id} style={[s.card, { flexDirection: 'row', gap: 12, opacity: 0.6 }]}>
+                <CategoryIcon tag={e.cat_tag} iconKey={e.icon_key} size={ICON_SIZE.list} circle={36} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.cardTitle, { marginRight: 8 }]}>
+                    {e.partner_name} hat {e.category_name} erledigt
+                  </Text>
+                  {!!e.note && <Text style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 2 }}>{e.note}</Text>}
+                  <View style={[s.iconRow, { gap: 4, marginTop: 4 }]}>
+                    <MaterialCommunityIcons name={ICONS.statusPending as any} size={ICON_SIZE.inline} color={COLORS.inkMuted} />
+                    <Text style={{ fontSize: 12, color: COLORS.inkMuted }}>
+                      {isOffline ? 'wartet auf Verbindung' : 'wird übertragen'}
+                    </Text>
+                    {e.without_request && (
+                      <MaterialCommunityIcons name={ICONS.toggleUnprompted as any} size={ICON_SIZE.inline} color={COLORS.gold} />
+                    )}
+                  </View>
+                </View>
+              </View>
+            ))}
+
+            {activityLog.length === 0 && pendingEntries.filter(e => e.group_id === selectedGroup?.id).length === 0
               ? <Text style={s.empty}>Noch keine Einträge in dieser Gruppe.</Text>
               : activityLog.map(entry => {
                 const cat = entry.point_categories as any;

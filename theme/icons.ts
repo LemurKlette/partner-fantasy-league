@@ -74,6 +74,8 @@ export const ICONS = {
   emptyState: 'inbox-outline',
   statusSuccess: 'check-circle-outline',
   statusWarning: 'alert-circle-outline',
+  statusOffline: 'cloud-off-outline',
+  statusPending: 'clock-outline',
   rankFirst: 'trophy-outline',
   inviteCode: 'ticket-confirmation-outline',
   inviteLink: 'link-variant',
