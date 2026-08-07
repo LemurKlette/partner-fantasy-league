@@ -535,3 +535,24 @@ beide nur auf `partner_id`, ohne `group_id` — Meilensteine und Kategorie-Spezi
 also über alle Gruppen zusammen. Mit dem jetzt gruppenweisen Tageslimit kann ein Partner in
 drei Gruppen an einem Tag bis zu 240 Punkte aufs globale Badge-Konto bekommen, während einer
 mit nur einer Gruppe bei 80 bleibt. Bewusst unverändert gelassen — Entscheidung steht aus.
+
+## Badge-Konto ebenfalls auf 80 Punkte pro Tag gedeckelt (2026-08-07)
+- **Ausgangslage:** Seit dem Fix in Migration 30 gilt das Tageslimit pro Gruppe. Badges
+  zählen aber über alle Gruppen zusammen — ein Partner in drei Gruppen konnte an einem Tag
+  240 Punkte aufs globale Badge-Konto bekommen, einer mit einer Gruppe nur 80
+- **Fix:** Für die Badge-Auswertung zählen höchstens 80 Punkte pro Kalendertag über alle
+  Gruppen zusammen. **Die Rangliste bleibt unberührt** — dort zählen weiterhin die
+  tatsächlich gespeicherten Punkte je Gruppe
+- Das Tagesbudget wird chronologisch verteilt: Einträge zählen in der Reihenfolge ihres
+  Entstehens, bis die 80 aufgebraucht sind. Das entspricht der Arbeitsweise des Triggers und
+  ist nachvollziehbarer als eine anteilige Verteilung über die Kategorien
+- Neue Funktion `partner_capped_entries(partner_id)` liefert alle Einträge mit gedeckelten
+  Punkten; `partner_point_totals()` (Fortschrittsbalken) und `checkAndAwardBadges()`
+  (Vergabe) greifen beide darauf zu, damit Anzeige und Vergabe garantiert dieselbe Rechnung
+  verwenden
+- Die Tagesgrenze läuft in der Zeitzone der Partner-Eigentümerin, passend zur Trigger-Logik
+- **Zählbasierte Badges bleiben unverändert:** „Der Hellseher", „Spülmaschinen-Flüsterer",
+  „Überraschungsei", „Gefälligkeitszögling" und „Der Allrounder" zählen Einträge, nicht
+  Punkte — die Aufgabe wurde ja erledigt, auch wenn ihre Punkte gedeckelt wurden
+- Neuer FAQ-Eintrag erklärt die Regel
+- Migration: `supabase/migrations/20260804_31_badge_points_daily_cap.sql`

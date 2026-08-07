@@ -384,17 +384,29 @@ export default function App() {
   // Typ 1/2/3/5 sind partnerweite Erfolge. Nur Typ 4 (Saisontitel) ist pro
   // Gruppe und wird serverseitig per pg_cron vergeben (siehe award_period_title).
   async function checkAndAwardBadges(partnerId: string, groupId: string) {
-    const [{ data: allBadges, error: e1 }, { data: earnedRows, error: e2 }, { data: allEntriesRaw, error: e3 }] = await Promise.all([
+    const [{ data: allBadges, error: e1 }, { data: earnedRows, error: e2 }, { data: cappedRows, error: e3 }] = await Promise.all([
       supabase.from('badges').select('*').neq('badge_type', 4),
       supabase.from('partner_badges').select('badge_id, period_key').eq('partner_id', partnerId),
-      supabase.from('point_entries')
-        .select('points, created_at, without_request, point_categories(name, category_tag, tier, is_global)')
-        .eq('partner_id', partnerId),
+      // Nicht direkt aus point_entries: die RPC deckelt die Punkte auf 80 pro
+      // Kalendertag ueber alle Gruppen zusammen. Ohne das haette ein Partner
+      // in drei Gruppen dreifachen Badge-Fortschritt pro Tag.
+      supabase.rpc('partner_capped_entries', { p_partner_id: partnerId }),
     ]);
     // Ohne Abbruch wuerden bei einem Fehler alle Zaehler als 0 gelesen und
     // dadurch faelschlich keine Badges vergeben.
     if (failed('Badge-Prüfung fehlgeschlagen', e1 ?? e2 ?? e3)) return;
-    const allEntries = (allEntriesRaw ?? []) as any[];
+    // Auf die bisherige Form bringen, damit die Auswertung unveraendert bleibt.
+    const allEntries = ((cappedRows ?? []) as any[]).map(r => ({
+      points: r.counted_points,
+      created_at: r.entry_at,
+      without_request: r.unprompted,
+      point_categories: {
+        name: r.category_name,
+        category_tag: r.cat_tag,
+        tier: r.cat_tier,
+        is_global: r.cat_is_global,
+      },
+    }));
     const earnedIds = new Set((earnedRows ?? []).map((b: any) => b.badge_id));
     const earnedPeriodKeys = new Set((earnedRows ?? []).map((b: any) => `${b.badge_id}:${b.period_key ?? ''}`));
 
@@ -1687,6 +1699,7 @@ export default function App() {
             { q: 'Sieht mein Partner die Punkte?', a: 'Er sieht seine Badges und seinen Fortschritt über sein eigenes Profil, aber nicht das direkte Ranking oder die Gruppen-Ansicht — die bleibt euch Frauen vorbehalten.' },
             { q: 'Warum bekomme ich manchmal 0 oder weniger Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute in dieser Gruppe schon eingetragen (beim 2. Mal gibt es die Hälfte, ab dem 3. Mal nichts), oder das Tageslimit von 80 Punkten in dieser Gruppe ist erreicht. Beides zählt je Gruppe getrennt. Der jeweilige Grund steht im Aktivitäts-Log.' },
             { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit. Diese Werte sind unveränderlich — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
+            { q: 'Zählen Punkte aus mehreren Gruppen doppelt für seine Badges?', a: 'Nein. Im Ranking jeder Gruppe zählen die dort vergebenen Punkte voll — fürs Badge-Konto werden aber höchstens 80 Punkte pro Tag über alle Gruppen zusammen gewertet. Wer in drei Gruppen mitspielt, sammelt Badges also nicht schneller.' },
             { q: 'Kann ich eine Gruppe wieder verlassen?', a: 'Ja — auf der Gruppenkarte in der Übersicht. Dein Partner verschwindet dann aus dem Ranking dieser Gruppe, die bisherigen Punkte bleiben als Historie erhalten. Hast du die Gruppe selbst erstellt, kannst du sie nur löschen.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
