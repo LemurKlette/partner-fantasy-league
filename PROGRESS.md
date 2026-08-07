@@ -1,8 +1,38 @@
-# Partner Fantasy League – Fortschritt (Update: Tier-System & Gamification)
+# Partner Fantasy League – Fortschritt
 
-Fortsetzung des Umbaus laut Balancing-&-Gamification-Konzept. Ausführliches Fortschritts-Log
-inkl. Vorgeschichte liegt im Obsidian-Vault ("Fantasy Partner League.md"). Diese Datei trackt
-speziell die 6-Schritte-Umbau-Sequenz.
+Technisches Log: was geändert wurde und **warum**, inklusive bewusst getroffener Kompromisse.
+Das Konzeptpapier und die Meilensteine in Kurzform liegen im Obsidian-Vault
+("Fantasy Partner League.md"). Der aktuelle Stand der Datenbank steht in
+`supabase/CURRENT.md` (generiert, `npm run schema`).
+
+**Dieser Kopf wird bei jeder Änderung mitgepflegt — er ist der Einstiegspunkt.**
+Die Abschnitte darunter stehen chronologisch, der jüngste ganz unten.
+
+---
+
+## Aktueller Stand (2026-08-07)
+
+**Zuletzt gemacht:** Audit-Punkte 1 und 2 — der Punktwert wird jetzt serverseitig aus der
+Kategorie abgeleitet (Trigger, nicht RPC), und das Projekt hat erstmals Indizes.
+Migration 37. Davor: Aufräum-Audit 6/7/8/10 (Migration 36, ausgeführt).
+
+**Noch auszuführen:** Migration 37 im Supabase-Dashboard. Achtung, die Signatur von
+`add_point_entry()` ändert sich (`p_points` entfällt) — der App-Build muss dazu passen.
+
+**Offen aus dem Audit vom 07.08.** (Punkte 1, 2, 6, 7, 8, 10 sind erledigt):
+
+| # | Thema | Art |
+|---|---|---|
+| 3 | Badge-Vergabe läuft komplett im Client — ein manipulierter Client kann sich jedes Badge selbst verleihen; schließt jemand die App direkt nach dem Punktevergeben, geht die Prüfung still verloren | technisch |
+| 4 | Der Aktiv-Schalter kollidiert mit der automatischen Zugehörigkeit; `delete_point_entry()` löscht bei Summe 0 still ein gesetztes `active = false` | Produktentscheidung |
+| 5 | `group_category_overrides` ist toter Ballast (Tabelle, vier Policies, ein Constraint) | Aufräumen |
+| 9 | `storage.objects`-Policies casten hart auf uuid → 500 statt 403 bei Nicht-UUID-Pfad | technisch |
+| — | Optimierung: `checkAndAwardBadges` lädt bei jeder Vergabe die komplette Historie · dieselbe Fensterfunktion läuft doppelt · `App.tsx` mit 2.244 Zeilen · keine Tests | später |
+
+**Geplantes Feature:** Minuspunkte. Die Vorbereitung dafür steht im Abschnitt zu Migration 37,
+die drei offenen Entscheidungen am Ende der Migrationsdatei selbst.
+
+---
 
 ## Schritt 1 – Tier-basiertes Punktesystem (2026-08-05)
 - Alte 16 Standard-Kategorien gelöscht, ersetzt durch 33 Kategorien in 4 Gruppen: Haushalt,
