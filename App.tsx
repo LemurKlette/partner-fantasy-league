@@ -997,6 +997,7 @@ export default function App() {
 
   if (screen === 'auth') return (
     <View style={s.center}>
+      <Text style={[s.title, { fontSize: 32, fontWeight: '600', letterSpacing: 0.5, marginBottom: 32 }]}>Power Couples</Text>
       <Text style={s.title}>{authMode === 'login' ? 'Anmelden' : 'Registrieren'}</Text>
       <TextInput style={s.input} placeholder="E-Mail" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
       <TextInput style={s.input} placeholder="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
@@ -1128,7 +1129,7 @@ export default function App() {
               </View>
             </TouchableOpacity>
           ) : (
-            <Text style={s.headerTitle}>Meine Gruppen</Text>
+            <Text style={s.headerTitle}>Power Couples</Text>
           )}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <TouchableOpacity onPress={() => { loadProfileData(); setScreen('profile'); }}>
