@@ -8,10 +8,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lemurklette.powercouples"
+      "bundleIdentifier": "com.powercouples.app"
     },
     "android": {
-      "package": "com.lemurklette.powercouples",
+      "package": "com.powercouples.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

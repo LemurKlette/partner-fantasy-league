@@ -84,7 +84,7 @@ bei jedem Production-Build hochzählt — du musst in `app.json` nichts anfassen
 
 ## Achtung: Paketkennung ist endgültig
 
-`app.json` trägt jetzt `com.lemurklette.powercouples` als `android.package` und
+`app.json` trägt jetzt `com.powercouples.app` als `android.package` und
 `ios.bundleIdentifier`. **Bis zum ersten Store-Upload frei änderbar, danach nicht mehr** — eine
 Änderung wäre dann eine komplett neue App ohne die bestehenden Installationen und Bewertungen.
 Wenn dir eine andere Kennung lieber ist, jetzt ändern.
