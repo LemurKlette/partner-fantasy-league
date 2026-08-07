@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   Share,
   StyleSheet,
@@ -19,7 +21,7 @@ import type { Session } from '@supabase/supabase-js';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BadgeGrid from './components/BadgeGrid';
 import Avatar from './components/Avatar';
-import { CATEGORY_COLORS, CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from './theme/colors';
+import { CATEGORY_COLORS, CATEGORY_TAG_TO_KEY, COLORS, MEDAL_COLORS, RANKING_CAPS, type CategoryKey } from './theme/colors';
 import { CUSTOM_CATEGORY_ICON_CHOICES, ICON_SIZE, ICONS, iconFor, type IconKey } from './theme/icons';
 
 type Partner = { id: string; name: string; avatar_url?: string | null };
@@ -996,21 +998,26 @@ export default function App() {
   );
 
   if (screen === 'auth') return (
-    <View style={s.center}>
-      <Text style={[s.title, { fontSize: 32, fontWeight: '600', letterSpacing: 0.5, marginBottom: 32 }]}>Power Couples</Text>
-      <Text style={s.title}>{authMode === 'login' ? 'Anmelden' : 'Registrieren'}</Text>
-      <TextInput style={s.input} placeholder="E-Mail" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-      <TextInput style={s.input} placeholder="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
-      {loading ? <ActivityIndicator style={{ marginTop: 16 }} /> : (
-        <TouchableOpacity style={s.btn} onPress={authMode === 'login' ? handleLogin : handleRegister}>
-          <Text style={s.btnText}>{authMode === 'login' ? 'Anmelden' : 'Registrieren'}</Text>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+      >
+        <Text style={[s.title, { fontSize: 32, fontWeight: '600', letterSpacing: 0.5, marginBottom: 32, textAlign: 'center' }]}>Power Couples</Text>
+        <Text style={[s.title, { textAlign: 'center', marginBottom: 20 }]}>{authMode === 'login' ? 'Anmelden' : 'Registrieren'}</Text>
+        <TextInput style={s.input} placeholder="E-Mail" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+        <TextInput style={s.input} placeholder="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
+        {loading ? <ActivityIndicator style={{ marginTop: 16 }} /> : (
+          <TouchableOpacity style={s.btn} onPress={authMode === 'login' ? handleLogin : handleRegister}>
+            <Text style={s.btnText}>{authMode === 'login' ? 'Anmelden' : 'Registrieren'}</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity onPress={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} style={{ marginTop: 16 }}>
+          <Text style={s.link}>{authMode === 'login' ? 'Noch kein Konto? Registrieren' : 'Bereits ein Konto? Anmelden'}</Text>
         </TouchableOpacity>
-      )}
-      <TouchableOpacity onPress={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
-        <Text style={s.link}>{authMode === 'login' ? 'Noch kein Konto? Registrieren' : 'Bereits ein Konto? Anmelden'}</Text>
-      </TouchableOpacity>
+      </ScrollView>
       <StatusBar style="auto" />
-    </View>
+    </KeyboardAvoidingView>
   );
 
   if (screen === 'onboarding-choice') return (
@@ -1264,40 +1271,54 @@ export default function App() {
               ? <ActivityIndicator color={COLORS.terracotta} />
               : ranking.length === 0
                 ? <Text style={s.empty}>Noch keine Punkte in diesem Zeitraum.</Text>
-                : ranking.map((item, index) => {
-                    const badges = earnedBadges.filter(b => b.partner_id === item.partner_id);
-                    const leaderLabel = period === 'week' ? 'Spieler der Woche' : period === 'month' ? 'Monatssieger' : `Saisonsieger ${new Date().getFullYear()}`;
-                    const isLeader = index === 0 && item.total > 0;
-                    return (
-                      <View key={item.partner_id} style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
-                        <View style={{ width: 26, alignItems: 'center' }}>
-                          {isLeader
-                            ? <MaterialCommunityIcons name={ICONS.rankFirst as any} size={ICON_SIZE.list} color={COLORS.gold} />
-                            : <Text style={{ fontSize: 18, fontWeight: '600', color: COLORS.inkMuted }}>{index + 1}.</Text>}
+                : <View style={{ gap: 3 }}>
+                    {ranking.map((item, index) => {
+                      const cap = RANKING_CAPS[period];
+                      const displayWidth = Math.min(item.total, cap) / cap * 100;
+                      const medalColor = index < 3 ? MEDAL_COLORS[index + 1 as 1|2|3] : null;
+                      return (
+                        <View key={item.partner_id} style={{ flexDirection: 'row', height: 28, alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4 }}>
+                          {/* Platz: 16px */}
+                          <Text style={{ width: 16, fontSize: 10, fontWeight: '600', color: COLORS.ink, textAlign: 'center' }}>
+                            {index + 1}
+                          </Text>
+                          {/* Avatar: 28px + Medal Overlay */}
+                          <View style={{ position: 'relative', width: 28, height: 28, marginLeft: 8 }}>
+                            <Avatar uri={item.avatar_url} name={item.name} size={28} />
+                            {medalColor && (
+                              <View style={{
+                                position: 'absolute',
+                                bottom: -1,
+                                right: -1,
+                                width: 16,
+                                height: 16,
+                                borderRadius: 8,
+                                backgroundColor: medalColor,
+                                borderWidth: 1,
+                                borderColor: COLORS.sand,
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                              }}>
+                                <MaterialCommunityIcons name="trophy-outline" size={11} color="white" />
+                              </View>
+                            )}
+                          </View>
+                          {/* Name: 60px fix */}
+                          <Text numberOfLines={1} style={{ width: 60, fontSize: 10, color: COLORS.ink, marginLeft: 8 }}>
+                            {item.name}
+                          </Text>
+                          {/* Balken: flex */}
+                          <View style={{ flex: 1, height: 5, backgroundColor: COLORS.sandDeep, borderRadius: 2, marginHorizontal: 8, overflow: 'hidden' }}>
+                            <View style={{ width: `${displayWidth}%`, height: '100%', backgroundColor: COLORS.terracotta }} />
+                          </View>
+                          {/* Punkte: 36px */}
+                          <Text style={{ width: 36, fontSize: 10, fontWeight: '600', color: COLORS.ink, textAlign: 'right' }}>
+                            {item.total}
+                          </Text>
                         </View>
-                        <Avatar uri={item.avatar_url} name={item.name} size={40} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={s.cardTitle}>{item.name}</Text>
-                          {isLeader && (
-                            <Text style={{ fontSize: 11, color: COLORS.gold, fontWeight: '600', marginTop: 1 }}>{leaderLabel}</Text>
-                          )}
-                          {badges.length > 0 && (
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                              {badges.map((b, bi) => (
-                                <MaterialCommunityIcons
-                                  key={`${b.name}-${bi}`}
-                                  name={iconFor(b.icon_key) as any}
-                                  size={16}
-                                  color={badgeColors(b.category_filter).stroke}
-                                />
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                        <Text style={s.pts}>{item.total} Pkt</Text>
-                      </View>
-                    );
-                  })
+                      );
+                    })}
+                  </View>
             }
 
             <Text style={s.sectionLabel}>Letzte Aktivitäten</Text>
