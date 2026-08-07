@@ -45,7 +45,7 @@ type Period = 'week' | 'month' | 'year';
 type GroupPartnerMembership = { partner_id: string; active: boolean };
 type Screen =
   | 'loading' | 'auth' | 'create-partner'
-  | 'groups' | 'create-group' | 'join-group'
+  | 'groups' | 'create-group' | 'join-group' | 'rename-group'
   | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help'
   | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile'
   | 'partner-badges' | 'point-history';
@@ -225,6 +225,8 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [partnerName, setPartnerName] = useState('');
   const [groupName, setGroupName] = useState('');
+  const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
+  const [renameGroupName, setRenameGroupName] = useState('');
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [loading, setLoading] = useState(false);
@@ -835,6 +837,32 @@ export default function App() {
     setLoading(false);
   }
 
+  function startRenameGroup(groupId: string, currentName: string) {
+    setRenameGroupId(groupId);
+    setRenameGroupName(currentName);
+    setScreen('rename-group');
+  }
+
+  async function handleRenameGroup() {
+    const name = renameGroupName.trim();
+    if (!name) { Alert.alert('Fehler', 'Bitte gib einen Gruppennamen ein.'); return; }
+    setLoading(true);
+    // Ueber die RPC statt direktem Update: sie schreibt ausschliesslich den
+    // Namen. Eine UPDATE-Policy haette auch invite_code freigegeben.
+    const { error } = await supabase.rpc('rename_group', { p_group_id: renameGroupId, p_name: name });
+    if (error) { Alert.alert('Fehler', error.message); }
+    else {
+      setGroups(prev => prev.map(g => g.id === renameGroupId ? { ...g, name } : g));
+      // Der Detail-Kopf zeigt selectedGroup, nicht die Liste -- sonst
+      // stuende dort nach dem Umbenennen weiter der alte Name.
+      setSelectedGroup(prev => prev && prev.id === renameGroupId ? { ...prev, name } : prev);
+      setRenameGroupId(null);
+      setRenameGroupName('');
+      setScreen('groups');
+    }
+    setLoading(false);
+  }
+
   async function handleDeleteGroup(groupId: string, groupName: string) {
     Alert.alert(
       'Gruppe löschen',
@@ -1182,6 +1210,21 @@ export default function App() {
     </View>
   );
 
+  if (screen === 'rename-group') return (
+    <View style={s.center}>
+      <Text style={s.title}>Gruppe umbenennen</Text>
+      <Text style={s.subtitle}>Der Einladungscode bleibt derselbe.</Text>
+      <TextInput style={s.input} placeholder="Gruppenname" value={renameGroupName} onChangeText={setRenameGroupName} />
+      {loading ? <ActivityIndicator style={{ marginTop: 16 }} /> : (
+        <TouchableOpacity style={s.btn} onPress={handleRenameGroup}><Text style={s.btnText}>Speichern</Text></TouchableOpacity>
+      )}
+      <TouchableOpacity onPress={() => { setRenameGroupId(null); setRenameGroupName(''); setScreen('groups'); }}>
+        <Text style={s.link}>Abbrechen</Text>
+      </TouchableOpacity>
+      <StatusBar style="auto" />
+    </View>
+  );
+
   if (screen === 'join-group') return (
     <View style={s.center}>
       <Text style={s.title}>Gruppe beitreten</Text>
@@ -1271,10 +1314,16 @@ export default function App() {
                   </View>
                 </TouchableOpacity>
                 {item.created_by === session?.user.id ? (
-                  <TouchableOpacity onPress={() => handleDeleteGroup(item.id, item.name)} style={[s.iconRow, { marginTop: 10, alignSelf: 'flex-start', gap: 4 }]}>
-                    <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
-                    <Text style={{ color: COLORS.terracotta, fontSize: 12, fontWeight: '600' }}>Gruppe löschen</Text>
-                  </TouchableOpacity>
+                  <View style={[s.iconRow, { marginTop: 10, gap: 16 }]}>
+                    <TouchableOpacity onPress={() => startRenameGroup(item.id, item.name)} style={[s.iconRow, { gap: 4 }]}>
+                      <MaterialCommunityIcons name={ICONS.actionEdit as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                      <Text style={{ color: COLORS.terracotta, fontSize: 12, fontWeight: '600' }}>Umbenennen</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteGroup(item.id, item.name)} style={[s.iconRow, { gap: 4 }]}>
+                      <MaterialCommunityIcons name={ICONS.actionDelete as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+                      <Text style={{ color: COLORS.terracotta, fontSize: 12, fontWeight: '600' }}>Gruppe löschen</Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <TouchableOpacity onPress={() => handleLeaveGroup(item.id, item.name)} style={[s.iconRow, { marginTop: 10, alignSelf: 'flex-start', gap: 4 }]}>
                     <MaterialCommunityIcons name={ICONS.actionLogout as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
@@ -1752,6 +1801,7 @@ export default function App() {
             { icon: ICONS.navSettings, title: 'Feste Punktwerte', text: 'Die Punktwerte der Standard-Aufgaben sind fest an ihre Aufwandsstufe gebunden und lassen sich nicht ändern — nur so bleiben eure Ergebnisse mit anderen Gruppen vergleichbar. Über "Eigene Kategorien" verwaltest du die selbst erfundenen Aufgaben.' },
             { icon: ICONS.helpCustomCategory, title: 'Eigene Kategorie', text: 'Erfinde eigene Aufgaben und wähle dafür eine der fünf Aufwandsstufen (2/5/10/20/40 Punkte) — kein freies Zahlenfeld mehr, damit die Werte fair und vergleichbar bleiben.' },
             { icon: ICONS.badgeSeasonWinner, title: 'Badges deines Partners ansehen', text: 'Tippe in "Meine Gruppen" auf seinen Namen — du siehst dieselbe Badge-Übersicht wie er selbst: Meilensteine, Kategorie-Spezialisten, Konsistenz-Serien, Saisontitel und versteckte Erfolge.' },
+            { icon: ICONS.actionEdit, title: 'Gruppe umbenennen', text: 'Hast du dich beim Namen vertippt? Auf der Gruppenkarte in "Meine Gruppen" findest du "Umbenennen" — allerdings nur bei Gruppen, die du selbst erstellt hast. Der Einladungscode bleibt dabei unverändert.' },
             { icon: ICONS.actionDelete, title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link. Die Gruppe verschwindet dann für alle, die bereits verdienten Badges und Punktestände der Partner bleiben aber bestehen.' },
           ].map(item => (
             <View key={item.title} style={s.card}>
@@ -1800,6 +1850,7 @@ export default function App() {
             { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit. Diese Werte sind unveränderlich — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
             { q: 'Zählen Punkte aus mehreren Gruppen doppelt für seine Badges?', a: 'Nein. Im Ranking jeder Gruppe zählen die dort vergebenen Punkte voll — fürs Badge-Konto zählt pro Tag aber nur die Gruppe, in der er an dem Tag am meisten gesammelt hat. Dieselbe erledigte Aufgabe in drei Gruppen einzutragen bringt also keinen dreifachen Badge-Fortschritt, und wer in vielen Gruppen mitspielt, hat keinen Vorteil.' },
             { q: 'Kann ich eine Gruppe wieder verlassen?', a: 'Ja — auf der Gruppenkarte in der Übersicht. Dein Partner verschwindet dann aus dem Ranking dieser Gruppe, die bisherigen Punkte bleiben als Historie erhalten. Hast du die Gruppe selbst erstellt, kannst du sie nur löschen.' },
+            { q: 'Kann ich den Namen einer Gruppe nachträglich ändern?', a: 'Ja, wenn du sie erstellt hast: "Umbenennen" auf der Gruppenkarte in "Meine Gruppen". Alle Mitglieder sehen ab dann den neuen Namen, der Einladungscode ändert sich nicht.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
             { q: 'Kann ich eine Gruppe löschen?', a: 'Nur wenn du sie erstellt hast — dann findest du einen "Gruppe löschen"-Link auf der Gruppenkarte in "Meine Gruppen". Die Gruppe verschwindet für alle Mitglieder, die Badges und Punktestände der Partner bleiben davon unberührt.' },

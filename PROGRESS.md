@@ -681,3 +681,58 @@ Aggregat je Partner überführen.
 - `partner_point_totals()` bleibt korrekt, da es `counted_points` summiert und diese
   außerhalb der besten Gruppe 0 sind
 - Migration: `supabase/migrations/20260804_35_merker_unfiltered.sql`
+
+---
+
+# Aufräum-Audit: Punkte 6, 7, 8 und 10 (2026-08-07)
+
+Migration: `supabase/migrations/20260804_36_cleanup_rename_orphans.sql`
+
+## 6 – Tote Emoji-Spalten entfernt
+- `badges.icon` und `point_categories.icon` stammen aus Migration 04/09. Seit Migration 24
+  läuft die Darstellung über `icon_key` und `theme/icons.ts`
+- Vor dem Drop geprüft: In `App.tsx` und `BadgeGrid.tsx` kommt ausschließlich `icon_key` vor.
+  Die beiden `item.icon`-Fundstellen im Hilfe-Screen sind lokale Literale mit `ICONS.*`-Namen,
+  keine Datenbankspalte. Das Anlegen eigener Kategorien schreibt `icon` nicht mehr mit
+- `badges.icon` war `not null`, wurde aber nur von Migrationen befüllt — kein Insert-Pfad
+  in der App betroffen. `select('*')` auf `badges` liefert die Spalte künftig einfach nicht mehr
+- Die enthaltenen Emojis gehen verloren; sie waren ohnehin über kein UI mehr erreichbar
+
+## 7 – Gruppen umbenennen
+- Auf `groups` gab es überhaupt keine UPDATE-Möglichkeit: ein Tippfehler im Gruppennamen
+  war dauerhaft
+- **Bewusst als RPC `rename_group(group_id, name)` statt als UPDATE-Policy.** Eine Policy
+  wirkt immer auf die ganze Zeile, RLS kann keine einzelnen Spalten schützen — die
+  Erstellerin hätte damit auch `invite_code` ändern können und allen Mitgliedern still den
+  Einladungslink entwertet. Die RPC schreibt ausschließlich `name` und folgt damit dem
+  Muster von `delete_group()` und `leave_group()`
+- Serverseitig geprüft: Name nicht leer (getrimmt), nur die Erstellerin, nicht bei weich
+  gelöschten Gruppen
+- UI: neuer Screen `rename-group` und ein „Umbenennen"-Link neben „Gruppe löschen" auf der
+  Gruppenkarte — nur für Erstellerinnen sichtbar, wie beim Löschen
+- Nach dem Speichern wird auch `selectedGroup` aktualisiert, sonst stünde im Kopf des
+  Gruppen-Details weiter der alte Name
+- Hilfe-Seite und FAQ um je einen Eintrag ergänzt (inkl. Hinweis, dass der Code gleich bleibt)
+
+## 8 – Verwaiste Gruppen
+- Verließ das letzte Mitglied eine Gruppe, blieb sie mit allen Daten bestehen — unsichtbar
+  für alle (die Übersicht läuft über `group_members`) und von niemandem mehr löschbar
+- `leave_group()` markiert die Gruppe jetzt weich als gelöscht, wenn danach kein Mitglied
+  mehr übrig ist
+- **Dabei gefunden:** `delete_account()` hatte dieselbe Lücke durch eine andere Tür. Schritt 6
+  löscht alle Mitgliedschaften der Person, ohne die betroffenen Gruppen danach zu prüfen.
+  Selbst erstellte Gruppen fängt Schritt 1 ab — war die Person dagegen in einer *fremden*
+  Gruppe das letzte verbliebene Mitglied, blieb dieselbe Karteileiche zurück. Neuer
+  Schritt 6a schließt das, die betroffenen Gruppen-IDs werden vor dem Löschen gemerkt
+- Bestehende mitgliederlose Gruppen werden per Backfill nachträglich markiert
+
+## 10 – `profiles.role` entfernt
+- Die Spalte wurde per Trigger (`set_woman_role`) und in `connect_to_partner()` gepflegt,
+  aber nirgends zur Autorisierung ausgewertet — weder in der App noch in einer Policy.
+  Sie suggerierte eine Rollenprüfung, die es nie gab
+- Geprüft: In `App.tsx` und den Komponenten kommt `role` kein einziges Mal vor. Die
+  Unterscheidung Frau/Mann ergibt sich ausschließlich aus der Datenlage (eigener Partner
+  vs. Verbindung über `partner_connections`), so wie es `loadUserData` schon immer macht
+- `set_my_timezone()` und `connect_to_partner()` schreiben die Spalte nicht mehr; beide
+  werden vor dem Drop neu angelegt, damit sie nie auf eine fehlende Spalte verweisen
+- `profiles` bleibt bestehen — `timezone` wird von der Anti-Farming-Logik aktiv genutzt
