@@ -10,7 +10,14 @@ Die Abschnitte darunter stehen chronologisch, der jüngste ganz unten.
 
 ---
 
-## Aktueller Stand (2026-08-07)
+## Aktueller Stand (2026-08-07 – Nachmittag)
+
+**Gerade gemacht:** Drei UI-Verbesserungen:
+- **Power Couples** als App-Name: Login-Screen + Gruppen-Header
+- Login-Screen: KeyboardAvoidingView + ScrollView gegen Tastatur-Überlagerung
+- Ranking: Kompaktes Balkendiagramm mit festen Spaltenbreiten statt Kacheln
+
+## Aktueller Stand (2026-08-07 – Früh)
 
 **Zuletzt gemacht:** Audit-Punkte 1 und 2 — der Punktwert wird jetzt serverseitig aus der
 Kategorie abgeleitet (Trigger, nicht RPC), und das Projekt hat erstmals Indizes.
@@ -869,3 +876,50 @@ Migration: `supabase/migrations/20260807_38_server_side_badge_awards.sql`
 - Tabelle komplett entfernt, samt Policies
 
 **Open nach Migration 38:** Execution im Supabase-Dashboard nötig.
+
+---
+
+# UI-Verbesserungen: Power Couples + Tastaturbehandlung + Ranking (2026-08-07 Nachmittag)
+
+Drei Commits in rascher Folge, jeweils mit Tests bestätigt:
+
+## 1. App-Name "Power Couples"
+- `app.json`: `name` auf "Power Couples" geändert (slug unverändert = keine Expo-Projekt-Auswirkung)
+- Auth-Screen (Login/Registrierung): "Power Couples" Titel über der Anmeldemaske (32px, fontWeight 600)
+- Gruppen-Übersicht: Header "Meine Gruppen" → "Power Couples"
+
+## 2. Tastatur-Überlagerung behoben
+- KeyboardAvoidingView um Auth-Screen mit `behavior: Platform.OS === 'ios' ? 'padding' : 'height'`
+- ScrollView mit `keyboardShouldPersistTaps="handled"` + `contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}`
+- Beide Eingabefelder bleiben sichtbar, wenn Tastatur geöffnet ist
+- Imports ergänzt: `KeyboardAvoidingView`, `Platform` aus react-native
+
+## 3. Ranking: Kompaktes Balkendiagramm
+- **Ersetzt die alte Kachel-Darstellung** komplett durch eine Zeilen-Tabelle
+- **Feste Spaltenbreiten**: [16px Platz] [28px Avatar] [60px Name] [flex Balken] [36px Punkte]
+  - Balkenlänge hängt NICHT von der Namenslänge ab (war der zentrale Fehler vorher)
+  - Alle Balken beginnen auf derselben vertikalen Linie
+- **Zeilenhöhe** 28px, Abstand zwischen Zeilen 3px
+- **Avatar** 28px rund, mit Medal-Overlay für Platz 1–3:
+  - Platz 1: Gold (#D4A574, 16px Trophy)
+  - Platz 2: Silber (#C0C0C0, 16px Trophy)
+  - Platz 3: Bronze (#CD7F32, 16px Trophy)
+  - Unten rechts am Avatar, 1px Rand in COLORS.sand
+- **Balken** 5px Höhe, borderRadius 2px, Spur COLORS.sandDeep, Füllung COLORS.terracotta
+- **Punktzahl rechts** 10px, fontWeight 600, COLORS.ink, feste Breite 36px
+- **Balkenlänge gedeckelt** auf MAX_DISPLAY_POINTS pro Zeitfenster:
+  - week:  180 Punkte
+  - month: 600 Punkte
+  - year:  3000 Punkte
+  - Width berechnet: `Math.min(points, cap) / cap * 100 + '%'`
+  - Balken wird voll, sobald Maximum erreicht, verschiebt keine anderen Balken
+  - Echte Punktzahl wird immer angezeigt, auch oberhalb des Deckels
+- **Zeitfenster-Logik** automatisch übernommen: `period` wird durch Tabs (Woche/Monat/Jahr) gesteuert
+  - Kein zusätzlicher State nötig
+- **theme/colors.ts** ergänzt:
+  - `RANKING_CAPS`: { week: 180, month: 600, year: 3000 }
+  - `MEDAL_COLORS`: { 1: Gold, 2: Silver, 3: Bronze }
+
+**Dateien geändert:** App.tsx, theme/colors.ts, app.json
+**Commits:** 3 × separate Commits + Push
+**TypeScript:** Alles grün
