@@ -453,11 +453,16 @@ export default function App() {
     // Ohne Abbruch wuerden bei einem Fehler alle Zaehler als 0 gelesen und
     // dadurch faelschlich keine Badges vergeben.
     if (failed('Badge-Prüfung fehlgeschlagen', e1 ?? e2 ?? e3)) return;
-    // Auf die bisherige Form bringen, damit die Auswertung unveraendert bleibt.
-    const allEntries = ((cappedRows ?? []) as any[]).map(r => ({
+    // Die RPC liefert alle Eintraege und markiert ueber counts_for_badges,
+    // welche in die Wertung eingehen (nur die der punktstaerksten Gruppe des
+    // Tages). "everyEntry" enthaelt zusaetzlich die uebrigen -- noetig fuer
+    // Einmal-Badges wie "Der Merker", die sonst an der Gruppenauswahl
+    // scheitern koennten.
+    const everyEntry = ((cappedRows ?? []) as any[]).map(r => ({
       points: r.counted_points,
       created_at: r.entry_at,
       without_request: r.unprompted,
+      counts: r.counts_for_badges !== false,
       point_categories: {
         name: r.category_name,
         category_tag: r.cat_tag,
@@ -465,6 +470,7 @@ export default function App() {
         is_global: r.cat_is_global,
       },
     }));
+    const allEntries = everyEntry.filter(e => e.counts);
     const earnedIds = new Set((earnedRows ?? []).map((b: any) => b.badge_id));
     const earnedPeriodKeys = new Set((earnedRows ?? []).map((b: any) => `${b.badge_id}:${b.period_key ?? ''}`));
 
@@ -490,7 +496,12 @@ export default function App() {
     const thisWeekWithoutRequestCount = allEntries.filter(e => weekKeyOf(e.created_at) === nowWeekKey && e.without_request).length;
     const thisWeekTags = new Set(allEntries.filter(e => weekKeyOf(e.created_at) === nowWeekKey).map(e => (e.point_categories as any)?.category_tag).filter(Boolean));
     const dishwasherCount = allEntries.filter(e => (e.point_categories as any)?.name === 'Geschirrspüler aus-/einräumen').length;
-    const hasAnniversaryEntry = allEntries.some(e => (e.point_categories as any)?.name === 'Jahrestag / Geburtstag perfekt gemeistert');
+    // Bewusst ueber ALLE Eintraege statt nur ueber die gewerteten: das Badge
+    // gibt es genau einmal, Mehrfacheintragung kann also nichts aufblaehen.
+    // Umgekehrt waere es schwer vermittelbar, wenn der Partner es nicht
+    // bekaeme, nur weil der Eintrag in der an dem Tag punktschwaecheren
+    // Gruppe stand.
+    const hasAnniversaryEntry = everyEntry.some(e => (e.point_categories as any)?.name === 'Jahrestag / Geburtstag perfekt gemeistert');
     const tier4ThisMonthCount = allEntries.filter(e => monthKeyOf(e.created_at) === nowMonthKey && (e.point_categories as any)?.tier === 4).length;
     const customCategoryCount = allEntries.filter(e => (e.point_categories as any)?.is_global === false).length;
 

@@ -666,3 +666,18 @@ Aggregat je Partner überführen.
   Aktionszustand zu unterscheiden
 - Unverändert: Der Schalter erscheint nur bei Haushalt und Mental Load
   (`multiplier_eligible`), so wie im Balancing-Konzept festgelegt — 20 der 34 Aufgaben
+
+## „Der Merker" löst jetzt unabhängig von der Gruppenauswahl aus (2026-08-07)
+- **Problem:** Seit Migration 32 zählen für Badges nur die Einträge der punktstärksten Gruppe
+  des Tages. Stand der Jahrestag-/Geburtstag-Eintrag zufällig in einer anderen Gruppe, fiel
+  er heraus und „Der Merker" kam nie — obwohl der Partner ihn verdient hatte
+- Bei einem Badge, das es genau **einmal** gibt, kann Mehrfacheintragung ohnehin nichts
+  aufblähen. Die Dedup-Regel schützt dort also vor nichts und schadet nur
+- **Lösung:** `partner_capped_entries()` liefert jetzt alle Einträge und markiert über die
+  neue Spalte `counts_for_badges`, welche in die Wertung eingehen (`LEFT JOIN` statt
+  `INNER JOIN` auf die beste Gruppe). Einträge außerhalb tragen weiterhin 0 Punkte bei
+- Im Client: alle Zähler- und Punkte-Badges nutzen unverändert nur die gewerteten Einträge,
+  ausschließlich `hasAnniversaryEntry` sieht die vollständige Menge
+- `partner_point_totals()` bleibt korrekt, da es `counted_points` summiert und diese
+  außerhalb der besten Gruppe 0 sind
+- Migration: `supabase/migrations/20260804_35_merker_unfiltered.sql`
