@@ -631,3 +631,26 @@ Aggregat je Partner überführen.
 - ISO-8601-Wochenberechnung (Montag als Wochenstart, Donnerstag entscheidet über das Jahr),
   getestet an den Jahreswechsel-Fällen: 31.12.2024 → KW 1/2025, 01.01.2023 → KW 52/2022
 - Migration: `supabase/migrations/20260804_34_point_history.sql`
+
+## Bugfix: Badge-Seite weiterer Partner war nicht erreichbar (2026-08-07)
+- **Fehler:** `loadUserData` merkte sich nur `pts[0]`, und der Header-Link auf der
+  Gruppenübersicht war der einzige Weg zur Badge-Seite. Bei mehreren Partnern kam man
+  ausschließlich zum ersten — alle weiteren waren komplett unerreichbar, samt ihrer
+  Punktehistorie
+- `loadUserData` füllt jetzt `myAllPartners` mit allen eigenen Partnern (vorher nur in
+  `openGroup` gesetzt, also erst nach dem Öffnen einer Gruppe verfügbar)
+- **Zwei Einstiege statt einem:**
+  - Gruppenübersicht: bei mehreren Partnern eine horizontal scrollbare Leiste mit
+    Avatar + Name je Partner. Bei genau einem Partner bleibt der bisherige große Kopfbereich
+  - Profil & Einstellungen: jede Partner-Karte bekommt „Badges & Erfolge ansehen" — dort
+    sind ohnehin alle Partner gelistet
+- Der Zurück-Button der Badge-Seite führt jetzt dorthin zurück, wo man hergekommen ist
+  (`badgesReturnScreen`), statt immer zur Gruppenübersicht
+
+### Dabei mitgefundene Folgefehler
+- `handleAddPartnerFromProfile` pflegte nur `myPartners`, nicht `myAllPartners` — ein neu
+  angelegter Partner fehlte in der Kopfleiste und bei der Punktevergabe bis zum nächsten
+  Neustart
+- `handleDeletePartner` setzte `partner` auf `null`, wenn der Haupt-Partner gelöscht wurde.
+  Die Übersicht zeigte dann „Meine Gruppen", obwohl noch weitere Partner existierten — jetzt
+  wird auf den nächsten verbleibenden gewechselt

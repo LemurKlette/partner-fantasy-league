@@ -236,6 +236,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyReturnScreen, setHistoryReturnScreen] = useState<Screen>('partner-badges');
+  const [badgesReturnScreen, setBadgesReturnScreen] = useState<Screen>('groups');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -266,7 +267,11 @@ export default function App() {
     // ein erneuter Anlauf laedt die Daten nochmal -- ein stehenbleibender
     // Ladekreis waere die schlechtere Alternative.
     if (failed('Verbindung fehlgeschlagen', ptsErr)) { setScreen('auth'); return; }
-    const p = (pts ?? [])[0] ?? null;
+    // Alle eigenen Partner merken, nicht nur den ersten -- sonst ist die
+    // Badge-Seite der uebrigen Partner ueberhaupt nicht erreichbar.
+    const myPts = (pts ?? []) as Partner[];
+    setMyAllPartners(myPts);
+    const p = myPts[0] ?? null;
     if (p) { setPartner(p); await loadGroups(session); return; }
     const { data: conns, error: connErr } = await supabase.from('partner_connections')
       .select('id').eq('man_user_id', session.user.id).is('disconnected_at', null).limit(1);
@@ -644,7 +649,12 @@ export default function App() {
             if (error) { Alert.alert('Fehler', error.message); }
             else {
               setMyPartners(prev => prev.filter(p => p.id !== partnerId));
-              if (partner?.id === partnerId) setPartner(null);
+              const rest = myAllPartners.filter(p => p.id !== partnerId);
+              setMyAllPartners(rest);
+              // Beim Loeschen des Haupt-Partners auf den naechsten wechseln
+              // statt auf null -- sonst zeigt der Kopfbereich "Meine Gruppen",
+              // obwohl noch weitere Partner existieren.
+              if (partner?.id === partnerId) setPartner(rest[0] ?? null);
             }
             setLoading(false);
           },
@@ -1030,6 +1040,9 @@ export default function App() {
       .insert({ partner_id: data.id, invite_code: code });
     if (connError) { Alert.alert('Fehler', connError.message); setLoading(false); return; }
     setMyPartners(prev => [...prev, { id: data.id, name: data.name, invite_code: code, avatar_url: null }]);
+    // Auch in die Liste aller Partner, sonst fehlt der neue Partner im
+    // Kopfbereich der Uebersicht und bei der Punktevergabe.
+    setMyAllPartners(prev => [...prev, { id: data.id, name: data.name, avatar_url: null }]);
     setEditPartnerNames(prev => ({ ...prev, [data.id]: data.name }));
     setNewPartnerNameForProfile('');
     setShowAddPartnerForm(false);
@@ -1177,10 +1190,10 @@ export default function App() {
     <View style={s.screen}>
       <View style={s.header}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          {partner ? (
+          {partner && myAllPartners.length <= 1 ? (
             <TouchableOpacity
               style={[s.iconRow, { flex: 1, gap: 12 }]}
-              onPress={() => { setViewedPartner(partner); setScreen('partner-badges'); }}>
+              onPress={() => { setViewedPartner(partner); setBadgesReturnScreen('groups'); setScreen('partner-badges'); }}>
               <Avatar uri={partner.avatar_url} name={partner.name} size={52} />
               <View style={{ flex: 1 }}>
                 <View style={[s.iconRow, { gap: 4 }]}>
@@ -1202,6 +1215,24 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Bei mehreren Partnern braucht jeder einen eigenen Einstieg --
+            sonst waere nur die Badge-Seite des ersten erreichbar. */}
+        {myAllPartners.length > 1 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingTop: 12 }}>
+            {myAllPartners.map(mp => (
+              <TouchableOpacity key={mp.id}
+                style={[s.iconRow, { gap: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 22,
+                  backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.sandDeep }]}
+                onPress={() => { setViewedPartner(mp); setBadgesReturnScreen('groups'); setScreen('partner-badges'); }}>
+                <Avatar uri={mp.avatar_url} name={mp.name} size={32} />
+                <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.ink }}>{mp.name}</Text>
+                <MaterialCommunityIcons name={ICONS.actionForward as any} size={16} color={COLORS.terracotta} />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
       </View>
       {groups.length === 0
         ? <View style={s.center}>
@@ -1863,7 +1894,7 @@ export default function App() {
   if (screen === 'partner-badges') return (
     <View style={s.screen}>
       <View style={s.header}>
-        <TouchableOpacity style={s.backRow} onPress={() => setScreen('groups')}>
+        <TouchableOpacity style={s.backRow} onPress={() => setScreen(badgesReturnScreen)}>
           <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
           <Text style={s.back}>Zurück</Text>
         </TouchableOpacity>
@@ -2010,6 +2041,18 @@ export default function App() {
                 <MaterialCommunityIcons name={ICONS.actionPhoto as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
                 <Text style={{ fontSize: 12, color: COLORS.terracotta, fontWeight: '600' }}>Foto ändern</Text>
               </View>
+            </TouchableOpacity>
+            {/* Zweiter Einstieg zu den Badges: hier stehen ohnehin alle Partner. */}
+            <TouchableOpacity
+              style={[s.iconRow, { justifyContent: 'center', gap: 6, marginBottom: 12 }]}
+              onPress={() => {
+                setViewedPartner({ id: p.id, name: p.name, avatar_url: p.avatar_url });
+                setBadgesReturnScreen('profile');
+                setScreen('partner-badges');
+              }}>
+              <MaterialCommunityIcons name={ICONS.badgeLegend as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+              <Text style={{ fontSize: 13, color: COLORS.terracotta, fontWeight: '600' }}>Badges & Erfolge ansehen</Text>
+              <MaterialCommunityIcons name={ICONS.actionForward as any} size={16} color={COLORS.terracotta} />
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <TextInput
