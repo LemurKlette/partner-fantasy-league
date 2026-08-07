@@ -15,7 +15,14 @@
 -- counts_for_badges, welche in die Wertung eingehen. Zaehler-Badges nutzen
 -- weiterhin nur die markierten, Einmal-Badges duerfen alle sehen.
 
-create or replace function partner_capped_entries(p_partner_id uuid)
+-- Die Spalte counts_for_badges kommt neu dazu. Postgres erlaubt es nicht,
+-- den Rueckgabetyp per "create or replace" zu aendern, deshalb vorher
+-- verwerfen. partner_point_totals() ruft diese Funktion zwar auf, haengt
+-- aber nicht als Abhaengigkeit daran (Funktionskoerper werden nicht
+-- aufgeloest) -- der Aufruf funktioniert nach dem Neuanlegen unveraendert.
+drop function if exists partner_capped_entries(uuid);
+
+create function partner_capped_entries(p_partner_id uuid)
 returns table (
   counted_points integer,
   entry_at timestamptz,
