@@ -10,12 +10,20 @@ Die Abschnitte darunter stehen chronologisch, der jüngste ganz unten.
 
 ---
 
-## Aktueller Stand (2026-08-07 – Nachmittag)
+## Aktueller Stand (2026-08-07 – Abend, Vorbereitung Testlauf)
 
-**Gerade gemacht:** Drei UI-Verbesserungen:
-- **Power Couples** als App-Name: Login-Screen + Gruppen-Header
-- Login-Screen: KeyboardAvoidingView + ScrollView gegen Tastatur-Überlagerung
-- Ranking: Kompaktes Balkendiagramm mit festen Spaltenbreiten statt Kacheln
+**Gerade gemacht:** Robustheit für den Testlauf:
+- **Sitzung überlebt den App-Neustart** — der Supabase-Client hatte kein `storage`, jede
+  Nutzerin musste sich bei jedem Öffnen neu anmelden
+- **Offline:** Lese-Cache (App startet in den letzten Stand statt in leere Listen) und
+  Warteschlange für Punktevergaben, die bei Verbindung automatisch rausgeht
+- Davor: App-Name „Power Couples", Tastatur-Fix im Login, Ranking als Balkendiagramm
+
+**Bekannte Lücke (bewusst offen):** Bricht die Verbindung *nach* dem Commit auf dem Server,
+aber *vor* der Antwort ab, wertet die App das als Netzfehler und sendet den Eintrag beim
+nächsten Sync erneut — dann zählt er doppelt. Sauber lösen ließe sich das nur mit einem
+Idempotenz-Schlüssel (`point_entries.client_id uuid unique`, vom Client erzeugt und durch die
+RPC durchgereicht). Für den Testlauf hingenommen, siehe „Nächste Schritte".
 
 ## Aktueller Stand (2026-08-07 – Früh)
 
@@ -923,3 +931,69 @@ Drei Commits in rascher Folge, jeweils mit Tests bestätigt:
 **Dateien geändert:** App.tsx, theme/colors.ts, app.json
 **Commits:** 3 × separate Commits + Push
 **TypeScript:** Alles grün
+
+---
+
+# Vorbereitung Testlauf: Sitzung und Offline-Betrieb (2026-08-07 Abend)
+
+## Fix: Die Sitzung überlebte keinen App-Neustart
+- **Fehler:** `lib/supabase.ts` erzeugte den Client ohne `storage`. Supabase greift dann auf
+  `localStorage` zu — das es in React Native nicht gibt — und fällt auf reinen Arbeitsspeicher
+  zurück. Jede Nutzerin musste sich bei **jedem** Öffnen der App neu anmelden
+- Gefunden beim Durchsehen vor dem Testlauf; wäre der erste Punkt gewesen, über den jeder
+  Tester gestolpert wäre
+- `AsyncStorage` als `storage`, dazu `persistSession` und `autoRefreshToken`
+- `detectSessionInUrl: false` — reines Browser-Feature (Magic-Link über die Adresszeile)
+- Auto-Refresh läuft nur im Vordergrund (`AppState`-Listener), im Hintergrund wären es
+  nutzlose Netzaufrufe
+
+## Offline: Lese-Cache
+- Neue Datei `lib/cache.ts`, dünne Schicht über AsyncStorage. Schlüssel sind **pro Nutzerin
+  getrennt** und werden beim Abmelden gelöscht, sonst sähe der nächste Login auf demselben
+  Gerät kurz die Gruppen der Vorgängerin
+- Gecacht werden die abgeleiteten Anzeigedaten, nicht die Rohantworten: Partner, Gruppen,
+  Ranking (je Gruppe und Zeitraum), Aktivitätslog, verdiente Badges, Mitgliederliste
+- Jeder Loader schreibt bei Erfolg und liest bei Fehler. `openGroup` und `loadUserData` haben
+  einen eigenen Rückfallpfad, weil sie sonst auf den Login-Screen bzw. in eine leere
+  Gruppenseite geführt hätten
+- `failed()` zeigt ohne Netz **keinen Dialog** mehr — das Banner oben erklärt den Zustand
+  ruhiger als ein „Network request failed"-Alert
+- Der Cache ist ausdrücklich **kein** Ersatz für die Datenbank: nur Anzeigedaten, die beim
+  nächsten erfolgreichen Laden überschrieben werden
+
+## Offline: Warteschlange für Punktevergaben
+- Neue Datei `lib/offline-queue.ts`. Nur Punktevergaben — es ist die einzige Aktion, die im
+  Alltag spontan passiert und deren Verlust wirklich ärgert. Gruppe anlegen oder beitreten
+  passiert einmal und verträgt ein „gleich nochmal"
+- **Der Punktwert wird bewusst nicht berechnet.** Er entsteht im Trigger
+  `apply_point_entry_rules` und hängt vom Tagesstand in der Gruppe ab, den das Gerät offline
+  nicht kennen kann. Der Eintrag steht bis zur Übertragung gedämpft und ohne Zahl im Log
+  („wartet auf Verbindung"), danach erscheint der echte Wert. Ein geschätzter Wert wäre
+  häufig falsch und würde nach dem Sync sichtbar nach unten springen
+- Damit bleibt die Entscheidung aus Audit-Punkt 1 unangetastet: der Server ist die einzige
+  Instanz, die Punkte vergibt. Kein zweites Regelwerk im Client
+- **Reihenfolge bleibt erhalten** — die Anti-Farming-Regel halbiert den zweiten Eintrag
+  derselben Aufgabe am Tag; bei vertauschter Reihenfolge bekäme die falsche Aufgabe den
+  vollen Wert
+- **Fachlich abgelehnte Einträge blockieren nicht.** Ist die Kategorie inzwischen archiviert
+  oder die Gruppe gelöscht, würde jeder weitere Versuch genauso scheitern. Solche Einträge
+  fliegen aus der Warteschlange, werden der Nutzerin aber gemeldet statt still verworfen
+- Übertragen wird bei Verbindungsrückkehr (`NetInfo`) und beim Antippen des Banners
+- Abmelden warnt, wenn noch Einträge warten — sie hängen an der Anmeldung und wären danach
+  nicht mehr übertragbar
+- `try/catch` zusätzlich zum `error`-Rückgabewert: wirft der Aufruf statt zurückzugeben,
+  wären bereits gesendete Einträge in der Warteschlange geblieben und beim nächsten Versuch
+  doppelt gezählt worden
+
+### Bekannte Lücke: keine Idempotenz
+Bricht die Verbindung *nach* dem Commit auf dem Server, aber *vor* der Antwort ab, sieht die
+App einen Netzfehler und sendet den Eintrag beim nächsten Sync erneut — er zählt dann doppelt.
+Das ist die klassische At-least-once-Zustellung. Sauber lösen ließe sich das mit einem
+Idempotenz-Schlüssel: eine Spalte `point_entries.client_id uuid unique`, vom Client erzeugt
+und durch `add_point_entry()` durchgereicht; ein zweiter Versuch liefe dann in den
+Unique-Constraint und würde als Erfolg gewertet. Bewusst nicht mehr vor dem Testlauf gebaut —
+es wäre die dritte Signaturänderung an derselben RPC an einem Tag.
+
+## Pakete
+- `@react-native-async-storage/async-storage` (Sitzung, Cache, Warteschlange)
+- `@react-native-community/netinfo` (Verbindungsrückkehr erkennen)
