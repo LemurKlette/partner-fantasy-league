@@ -556,3 +556,26 @@ mit nur einer Gruppe bei 80 bleibt. Bewusst unverändert gelassen — Entscheidu
   Punkte — die Aufgabe wurde ja erledigt, auch wenn ihre Punkte gedeckelt wurden
 - Neuer FAQ-Eintrag erklärt die Regel
 - Migration: `supabase/migrations/20260804_31_badge_points_daily_cap.sql`
+
+## Badge-Konto: pro Tag zählt nur die beste Gruppe (2026-08-07)
+Ersetzt die Regel aus Migration 31. Der 80-Punkte-Tagesdeckel über alle Gruppen reichte
+nicht: Trägt eine Nutzerin dieselbe erledigte Aufgabe in mehrere Gruppen ein, zählte sie
+mehrfach aufs Badge-Konto — „Müll rausbringen" in drei Gruppen ergab 3 × 2 = 6 Punkte für
+eine einzige echte Handlung, weit unterhalb jedes Deckels.
+
+- **Neue Regel:** Für die Badge-Auswertung zählt pro Kalendertag nur die Gruppe, in der der
+  Partner an dem Tag am meisten gesammelt hat
+- Damit zählt eine Handlung genau einmal, und wer in vielen Gruppen mitspielt, hat keinen
+  Vorteil gegenüber jemandem mit nur einer Gruppe
+- Bewusst in Kauf genommen: Aufgaben, die an dem Tag nur in einer *anderen* Gruppe stehen,
+  zählen nicht mit. Vom Nutzer nach Abwägung so entschieden
+- Bei Gleichstand entscheidet die `group_id`, damit das Ergebnis stabil bleibt und nicht bei
+  jedem Aufruf wechselt
+- Der 80er-Deckel bleibt als Sicherheitsnetz bestehen, greift aber normalerweise nicht mehr:
+  eine einzelne Gruppe kommt pro Tag ohnehin nicht darüber. Relevant nur für Alt-Einträge
+  aus der Zeit vor Migration 17, als es noch gar kein Tageslimit gab
+- **Die Ranglisten bleiben unberührt** — dort zählen weiterhin die gespeicherten Punkte je Gruppe
+- Gilt automatisch auch für die zählbasierten Badges („Spülmaschinen-Flüsterer",
+  „Der Hellseher", …), da auch sie nur noch Einträge der besten Gruppe sehen
+- FAQ nachgezogen
+- Migration: `supabase/migrations/20260804_32_badge_points_best_group.sql`

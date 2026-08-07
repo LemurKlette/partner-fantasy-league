@@ -387,9 +387,10 @@ export default function App() {
     const [{ data: allBadges, error: e1 }, { data: earnedRows, error: e2 }, { data: cappedRows, error: e3 }] = await Promise.all([
       supabase.from('badges').select('*').neq('badge_type', 4),
       supabase.from('partner_badges').select('badge_id, period_key').eq('partner_id', partnerId),
-      // Nicht direkt aus point_entries: die RPC deckelt die Punkte auf 80 pro
-      // Kalendertag ueber alle Gruppen zusammen. Ohne das haette ein Partner
-      // in drei Gruppen dreifachen Badge-Fortschritt pro Tag.
+      // Nicht direkt aus point_entries: die RPC liefert pro Kalendertag nur
+      // die Eintraege der Gruppe mit der hoechsten Tagessumme. Sonst zaehlte
+      // dieselbe erledigte Aufgabe mehrfach, wenn sie in mehrere Gruppen
+      // eingetragen wird, und wer in vielen Gruppen ist haette einen Vorteil.
       supabase.rpc('partner_capped_entries', { p_partner_id: partnerId }),
     ]);
     // Ohne Abbruch wuerden bei einem Fehler alle Zaehler als 0 gelesen und
@@ -1699,7 +1700,7 @@ export default function App() {
             { q: 'Sieht mein Partner die Punkte?', a: 'Er sieht seine Badges und seinen Fortschritt über sein eigenes Profil, aber nicht das direkte Ranking oder die Gruppen-Ansicht — die bleibt euch Frauen vorbehalten.' },
             { q: 'Warum bekomme ich manchmal 0 oder weniger Punkte für einen Eintrag?', a: 'Entweder wurde dieselbe Aufgabe heute in dieser Gruppe schon eingetragen (beim 2. Mal gibt es die Hälfte, ab dem 3. Mal nichts), oder das Tageslimit von 80 Punkten in dieser Gruppe ist erreicht. Beides zählt je Gruppe getrennt. Der jeweilige Grund steht im Aktivitäts-Log.' },
             { q: 'Wie kommt der Punktwert einer Aufgabe zustande?', a: 'Jede Aufgabe hat eine feste Aufwandsstufe (Tier 1–5 = 2/5/10/20/40 Punkte) nach Zeitaufwand und Unannehmlichkeit. Diese Werte sind unveränderlich — das macht Gruppen untereinander vergleichbar und verhindert Punkte-Inflation.' },
-            { q: 'Zählen Punkte aus mehreren Gruppen doppelt für seine Badges?', a: 'Nein. Im Ranking jeder Gruppe zählen die dort vergebenen Punkte voll — fürs Badge-Konto werden aber höchstens 80 Punkte pro Tag über alle Gruppen zusammen gewertet. Wer in drei Gruppen mitspielt, sammelt Badges also nicht schneller.' },
+            { q: 'Zählen Punkte aus mehreren Gruppen doppelt für seine Badges?', a: 'Nein. Im Ranking jeder Gruppe zählen die dort vergebenen Punkte voll — fürs Badge-Konto zählt pro Tag aber nur die Gruppe, in der er an dem Tag am meisten gesammelt hat. Dieselbe erledigte Aufgabe in drei Gruppen einzutragen bringt also keinen dreifachen Badge-Fortschritt, und wer in vielen Gruppen mitspielt, hat keinen Vorteil.' },
             { q: 'Kann ich eine Gruppe wieder verlassen?', a: 'Ja — auf der Gruppenkarte in der Übersicht. Dein Partner verschwindet dann aus dem Ranking dieser Gruppe, die bisherigen Punkte bleiben als Historie erhalten. Hast du die Gruppe selbst erstellt, kannst du sie nur löschen.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
