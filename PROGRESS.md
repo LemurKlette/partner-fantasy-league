@@ -613,3 +613,21 @@ Konsequenz aus der Anforderung „lebenslanges Erfolgskonto" — beides gleichze
 Für die Nutzerinnen ist die Gruppe vollständig verschwunden. Sollte später echtes Löschen
 nötig werden (z.B. wegen einer Löschauskunft), müsste man die Punkte vorher in ein
 Aggregat je Partner überführen.
+
+## Neue Seite: Punktehistorie (2026-08-07)
+- Zeigt die vollständige Historie eines Partners über **alle** Gruppen, nach Kalenderwochen
+  gruppiert: `KW 23/2023 (05.06. – 11.06.)` mit Wochensumme, darunter die Einträge
+- Einträge aus weich gelöschten Gruppen werden als „gelöschte Gruppe" gekennzeichnet statt
+  mit dem Gruppennamen — sie zählen weiter aufs Erfolgskonto (siehe Migration 33)
+- Wochen ohne Einträge entstehen gar nicht erst, da nur vorhandene Einträge gruppiert werden
+- Bonus-Einträge tragen den Blitz und „ohne Aufforderung"
+- Erreichbar von der Badge-Seite (Frauen-Ansicht) und aus dem Männerprofil
+- Neue Funktion `partner_point_history(partner_id)`, SECURITY DEFINER mit derselben
+  Zugriffsprüfung wie `partner_capped_entries()`. Nötig, weil die RLS auf `point_entries` an
+  die Gruppenmitgliedschaft gebunden ist — Männer stehen nie in `group_members` und könnten
+  ihre eigene Historie sonst nicht sehen
+- Gezeigt werden die **tatsächlich vergebenen** Punkte je Gruppe, nicht die für Badges
+  gedeckelten: die Historie protokolliert, was in der jeweiligen Gruppe passiert ist
+- ISO-8601-Wochenberechnung (Montag als Wochenstart, Donnerstag entscheidet über das Jahr),
+  getestet an den Jahreswechsel-Fällen: 31.12.2024 → KW 1/2025, 01.01.2023 → KW 52/2022
+- Migration: `supabase/migrations/20260804_34_point_history.sql`

@@ -47,7 +47,14 @@ type Screen =
   | 'loading' | 'auth' | 'create-partner'
   | 'groups' | 'create-group' | 'join-group'
   | 'group-detail' | 'add-points' | 'create-category' | 'manage-categories' | 'profile' | 'help'
-  | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile' | 'partner-badges';
+  | 'onboarding-choice' | 'show-partner-code' | 'enter-invite-code' | 'man-profile'
+  | 'partner-badges' | 'point-history';
+
+type HistoryEntry = {
+  entry_at: string; points: number; unprompted: boolean;
+  task_name: string; cat_tag: string | null; icon_key: string | null;
+  group_name: string; group_deleted: boolean;
+};
 
 const CATEGORY_TAG_ORDER = ['haushalt', 'mental_load', 'romantik', 'verlaesslichkeit'];
 const CATEGORY_TAG_LABELS: Record<string, string> = {
@@ -147,6 +154,29 @@ function failed(title: string, error: { message: string } | null | undefined): b
   return true;
 }
 
+// Kalenderwoche nach ISO 8601 (Montag als Wochenstart, die Woche des
+// 4. Januar ist KW 1). Der Donnerstag entscheidet ueber das Jahr -- deshalb
+// kann der 31.12. noch zu KW 1 des Folgejahres gehoeren.
+function isoWeekInfo(dateStr: string) {
+  const d = new Date(dateStr);
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayIdx = date.getDay() === 0 ? 7 : date.getDay(); // 1 = Montag
+  const monday = new Date(date);
+  monday.setDate(date.getDate() - (dayIdx - 1));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const thursday = new Date(monday);
+  thursday.setDate(monday.getDate() + 3);
+  const isoYear = thursday.getFullYear();
+  const jan1 = new Date(isoYear, 0, 1);
+  const week = Math.floor((thursday.getTime() - jan1.getTime()) / 86400000 / 7) + 1;
+  return { key: `${isoYear}-${String(week).padStart(2, '0')}`, week, isoYear, monday, sunday };
+}
+
+function dayMonth(d: Date): string {
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
+}
+
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
   if (seconds < 60) return 'gerade eben';
@@ -203,6 +233,9 @@ export default function App() {
   const [myAllPartners, setMyAllPartners] = useState<Partner[]>([]);
   const [viewedPartner, setViewedPartner] = useState<Partner | null>(null);
   const [groupAvatarsMap, setGroupAvatarsMap] = useState<Record<string, GroupPartnerPreview[]>>({});
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyReturnScreen, setHistoryReturnScreen] = useState<Screen>('partner-badges');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -332,6 +365,18 @@ export default function App() {
       user_id: p.owner_user_id,
       partner: { id: p.id, name: p.name, avatar_url: p.avatar_url },
     })));
+  }
+
+  async function openPointHistory(p: Partner, returnTo: Screen) {
+    setViewedPartner(p);
+    setHistoryReturnScreen(returnTo);
+    setHistory([]);
+    setHistoryLoading(true);
+    setScreen('point-history');
+    const { data, error } = await supabase.rpc('partner_point_history', { p_partner_id: p.id });
+    setHistoryLoading(false);
+    if (failed('Punktehistorie konnte nicht geladen werden', error)) return;
+    setHistory((data ?? []) as HistoryEntry[]);
   }
 
   async function loadRankingForGroup(groupId: string, p: Period) {
@@ -1772,6 +1817,12 @@ export default function App() {
                 <Avatar uri={(conn.partners as any).avatar_url} name={(conn.partners as any).name} size={62} />
                 <Text style={s.headerTitle}>{(conn.partners as any).name}</Text>
               </View>
+              <TouchableOpacity style={[s.card, s.iconRow]}
+                onPress={() => openPointHistory(conn.partners as any, 'man-profile')}>
+                <MaterialCommunityIcons name={ICONS.helpRanking as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
+                <Text style={[s.cardTitle, { flex: 1 }]}>Punktehistorie ansehen</Text>
+                <MaterialCommunityIcons name={ICONS.actionForward as any} size={ICON_SIZE.inline} color={COLORS.inkMuted} />
+              </TouchableOpacity>
               <BadgeGrid partnerId={(conn.partners as any).id} surroundingColor={COLORS.sand} />
             </View>
           ))
@@ -1824,12 +1875,94 @@ export default function App() {
           </View>
         </View>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
+      <ScrollView contentContainerStyle={{ padding: 20, gap: 20 }}>
+        {viewedPartner && (
+          <TouchableOpacity style={[s.card, s.iconRow]} onPress={() => openPointHistory(viewedPartner, 'partner-badges')}>
+            <MaterialCommunityIcons name={ICONS.helpRanking as any} size={ICON_SIZE.list} color={COLORS.terracotta} />
+            <Text style={[s.cardTitle, { flex: 1 }]}>Punktehistorie ansehen</Text>
+            <MaterialCommunityIcons name={ICONS.actionForward as any} size={ICON_SIZE.inline} color={COLORS.inkMuted} />
+          </TouchableOpacity>
+        )}
         {viewedPartner && <BadgeGrid partnerId={viewedPartner.id} surroundingColor={COLORS.sand} />}
       </ScrollView>
       <StatusBar style="auto" />
     </View>
   );
+
+  if (screen === 'point-history') {
+    // Nach Kalenderwochen gruppieren. Die Eintraege kommen bereits absteigend
+    // sortiert, Wochen ohne Eintraege entstehen dadurch gar nicht erst.
+    const weeks: { key: string; label: string; entries: HistoryEntry[] }[] = [];
+    history.forEach(h => {
+      const info = isoWeekInfo(h.entry_at);
+      let bucket = weeks.find(w => w.key === info.key);
+      if (!bucket) {
+        bucket = {
+          key: info.key,
+          label: `KW ${info.week}/${info.isoYear} (${dayMonth(info.monday)} – ${dayMonth(info.sunday)})`,
+          entries: [],
+        };
+        weeks.push(bucket);
+      }
+      bucket.entries.push(h);
+    });
+
+    return (
+      <View style={s.screen}>
+        <View style={s.header}>
+          <TouchableOpacity style={s.backRow} onPress={() => setScreen(historyReturnScreen)}>
+            <MaterialCommunityIcons name={ICONS.actionBack as any} size={ICON_SIZE.inline} color={COLORS.terracotta} />
+            <Text style={s.back}>Zurück</Text>
+          </TouchableOpacity>
+          <Text style={s.headerTitle}>Punktehistorie</Text>
+          <Text style={s.headerSub}>{viewedPartner?.name}</Text>
+        </View>
+        {historyLoading
+          ? <View style={s.center}><ActivityIndicator color={COLORS.terracotta} /></View>
+          : history.length === 0
+            ? <View style={s.center}>
+                <MaterialCommunityIcons name={ICONS.emptyState as any} size={40} color={COLORS.inkMuted} style={{ marginBottom: 8 }} />
+                <Text style={s.empty}>Noch keine Punkte vergeben.</Text>
+              </View>
+            : <ScrollView contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 40 }}>
+                {weeks.map(w => {
+                  const weekTotal = w.entries.reduce((sum, e) => sum + e.points, 0);
+                  return (
+                    <View key={w.key} style={{ gap: 8, marginTop: 8 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={s.sectionLabel}>{w.label}</Text>
+                        <Text style={[s.pts, { fontSize: 13 }]}>{weekTotal} Pkt</Text>
+                      </View>
+                      {w.entries.map((e, i) => (
+                        <View key={`${w.key}-${i}`} style={[s.card, { flexDirection: 'row', gap: 12 }]}>
+                          <CategoryIcon tag={e.cat_tag} iconKey={e.icon_key} size={ICON_SIZE.list} circle={36} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={s.cardTitle}>{e.task_name}</Text>
+                            <Text style={s.cardSub}>
+                              {dayMonth(new Date(e.entry_at))}{' · '}
+                              {e.group_deleted ? 'gelöschte Gruppe' : `Gruppe „${e.group_name}"`}
+                            </Text>
+                            {e.unprompted && (
+                              <View style={[s.iconRow, { gap: 4, marginTop: 4 }]}>
+                                <MaterialCommunityIcons name={ICONS.toggleUnprompted as any} size={13} color={COLORS.gold} />
+                                <Text style={{ fontSize: 11, color: COLORS.gold, fontWeight: '600' }}>ohne Aufforderung</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={[s.pts, e.points === 0 && { color: COLORS.inkMuted }]}>
+                            {e.points > 0 ? `+${e.points}` : '0'}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })}
+              </ScrollView>
+        }
+        <StatusBar style="auto" />
+      </View>
+    );
+  }
 
   if (screen === 'profile') return (
     <View style={s.screen}>
