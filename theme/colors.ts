@@ -1,6 +1,18 @@
 // Einzige Farbquelle der App.
 // Regel: Ausserhalb dieser Datei steht NIRGENDWO ein Hex-Wert.
 
+export const RANKING_CAPS = {
+  week: 180,
+  month: 600,
+  year: 3000,
+};
+
+export const MEDAL_COLORS = {
+  1: '#D4A574', // Gold
+  2: '#C0C0C0', // Silver
+  3: '#CD7F32', // Bronze
+};
+
 export const COLORS = {
   // Flächen
   sand:        '#F1EFE8',  // Grundfläche aller Screens
