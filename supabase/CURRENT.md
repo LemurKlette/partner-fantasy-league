@@ -2,7 +2,7 @@
 
 **Generiert — nicht von Hand bearbeiten.** Neu erzeugen mit `npm run schema`.
 
-Aus 37 Migrationen in `supabase/migrations/` zusammengesetzt. Die Spalte
+Aus 38 Migrationen in `supabase/migrations/` zusammengesetzt. Die Spalte
 „Migration" nennt die Datei, in der das Objekt **zuletzt** definiert wurde — dort steht
 die verbindliche Fassung samt Begründung. Dieser Index ersetzt die Migrationen nicht,
 er zeigt auf die richtige.
@@ -146,6 +146,7 @@ er zeigt auf die richtige.
 |---|---|---|
 | `add_point_entry(uuid, uuid, uuid, text, boolean)` | 37 | 1 |
 | `apply_point_entry_rules()` | 37 | 4 |
+| `award_badges_for_partner(uuid)` | 38 | 1 |
 | `award_period_title(text)` | 33 | 3 |
 | `connect_to_partner(text)` | 36 | 3 |
 | `delete_account()` | 36 | 4 |
@@ -153,6 +154,7 @@ er zeigt auf die richtige.
 | `delete_group(uuid)` | 33 | 2 |
 | `delete_partner(uuid)` | 14 | 1 |
 | `delete_point_entry(uuid)` | 29 | 1 |
+| `evaluate_badges(uuid)` | 38 | 1 |
 | `get_my_connected_partner_ids()` | 12 | 1 |
 | `get_my_group_ids()` | 03 | 1 |
 | `get_my_partner_ids()` | 12 | 1 |
@@ -163,6 +165,9 @@ er zeigt auf die richtige.
 | `partner_point_totals(uuid)` | 31 | 2 |
 | `rename_group(uuid, text)` | 36 | 1 |
 | `set_my_timezone(text)` | 36 | 2 |
+| `sql_month_key(timestamptz)` | 38 | 1 |
+| `sql_week_key(timestamptz)` | 38 | 1 |
+| `sql_year_key(timestamptz)` | 38 | 1 |
 
 Entfernt: `set_woman_role()` (in 36), `add_point_entry(uuid, uuid, uuid, integer, text, boolean)` (in 37)
 
@@ -171,6 +176,7 @@ Entfernt: `set_woman_role()` (in 36), `add_point_entry(uuid, uuid, uuid, integer
 | Trigger | Tabelle | Migration |
 |---|---|---|
 | `trg_apply_point_entry_rules` | point_entries | 17 |
+| `trg_award_badges_on_point_entry` | point_entries | 38 |
 
 ## Policies
 
@@ -191,6 +197,7 @@ Entfernt: `set_woman_role()` (in 36), `add_point_entry(uuid, uuid, uuid, integer
 | groups | select | Ersteller und Mitglieder sehen Gruppe | 01 |
 | partner_badges | select | Badges eigener Gruppen und verbundener Partner sichtbar | 25 |
 | partner_badges | insert | Badges nur fuer eigene Partner | 25 |
+| partner_badges | insert | partner_badges_no_direct_insert | 38 |
 | partner_connections | insert | Frau erstellt Verbindung fuer ihren Partner | 12 |
 | partner_connections | update | Mann kann sich disconnecten | 10 |
 | partner_connections | select | Sieht eigene Verbindungen | 12 |

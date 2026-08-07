@@ -19,15 +19,13 @@ Migration 37. Davor: Aufräum-Audit 6/7/8/10 (Migration 36, ausgeführt).
 **Noch auszuführen:** Migration 37 im Supabase-Dashboard. Achtung, die Signatur von
 `add_point_entry()` ändert sich (`p_points` entfällt) — der App-Build muss dazu passen.
 
-**Offen aus dem Audit vom 07.08.** (Punkte 1, 2, 6, 7, 8, 10 sind erledigt):
+**Offen aus dem Audit vom 07.08.** (Punkte 1, 2, 3, 5, 6, 7, 8, 10 sind erledigt):
 
 | # | Thema | Art |
 |---|---|---|
-| 3 | Badge-Vergabe läuft komplett im Client — ein manipulierter Client kann sich jedes Badge selbst verleihen; schließt jemand die App direkt nach dem Punktevergeben, geht die Prüfung still verloren | technisch |
 | 4 | Der Aktiv-Schalter kollidiert mit der automatischen Zugehörigkeit; `delete_point_entry()` löscht bei Summe 0 still ein gesetztes `active = false` | Produktentscheidung |
-| 5 | `group_category_overrides` ist toter Ballast (Tabelle, vier Policies, ein Constraint) | Aufräumen |
 | 9 | `storage.objects`-Policies casten hart auf uuid → 500 statt 403 bei Nicht-UUID-Pfad | technisch |
-| — | Optimierung: `checkAndAwardBadges` lädt bei jeder Vergabe die komplette Historie · dieselbe Fensterfunktion läuft doppelt · `App.tsx` mit 2.244 Zeilen · keine Tests | später |
+| — | Optimierung: `App.tsx` mit jetzt 1.850 Zeilen · keine Tests für die Wertungslogik · `BadgeGrid` lädt Badges separat statt beim Punktevergeben | später |
 
 **Geplantes Feature:** Minuspunkte. Die Vorbereitung dafür steht im Abschnitt zu Migration 37,
 die drei offenen Entscheidungen am Ende der Migrationsdatei selbst.
@@ -837,3 +835,37 @@ ist deshalb bewusst so gebaut, dass sie dem nicht im Weg steht — Details unten
 - `partner_capped_entries()` wählt pro Tag die punktstärkste Gruppe fürs Badge-Konto. Ob
   Strafen dort mitzählen — und ob sie ein bereits verdientes Badge wieder entziehen können —
   ist eine Produktentscheidung
+
+---
+
+# Audit-Punkte 3 und 5: Serverseitige Badge-Vergabe + Aufräumen (2026-08-07)
+
+Migration: `supabase/migrations/20260807_38_server_side_badge_awards.sql`
+
+## 3 – Badge-Vergabe läuft nicht mehr im Client
+- **Problem:** `checkAndAwardBadges` entschied lokal im Client, welche Badges vergeben werden — ein
+  manipulierter Client konnte sich jedes Badge selbst verleihen. Schloss jemand die App direkt nach
+  dem Punktevergeben, lief die Prüfung nie — verdiente Badges gingen still verloren
+- **Lösung:** Trigger `trg_award_badges_on_point_entry` auf `point_entries` mit kompletter Badge-Logik
+  in Plpgsql. Der Trigger lädt nach jedem neuen Eintrag alle Badges durch und INSERT die verdient
+  erachteten — automatisch, immer, unabhängig vom Client
+- **SQL-Hilfsfunktionen:** `sql_week_key()`, `sql_month_key()`, `sql_year_key()` portieren die
+  JavaScript-Logik (Wochenrechnung nach ISO-8601, Monats-/Jahresschlüssel)
+- **RPC `evaluate_badges()`:** Gibt eine Liste verdient erachteter Badge-IDs zurück. Wird vom Trigger
+  aufgerufen und berührt die DB nicht selbst
+- **RPC `award_badges_for_partner()`:** Macht die INSERTs nach dem `evaluate_badges()`-Check,
+  SECURITY DEFINER aber mit explizit übergebener Partner-ID (keine Lücke für den Client)
+- **Policy gelöscht:** Die alte INSERT-Policy auf `partner_badges` wird durch eine `with check (false)`
+  ersetzt — nur noch der Trigger darf INSERTs machen. Der Client kann nicht mehr direkt Badges vergeben
+- **Client angepasst:** `checkAndAwardBadges` entfernt (137 Zeilen Duplicate), der Aufruf aus
+  `handleSavePoints` weg. Der Trigger macht die Arbeit – der Client braucht sich nicht mehr darum zu kümmern.
+  `BadgeGrid` lädt die Badges beim nächsten Besuch. Mit dieser Änderung fällt auch die Abhängigkeit auf
+  die komplexe JavaScript-Logik für die Wertung
+
+## 5 – `group_category_overrides` aufgeräumt
+- Tabelle, vier Policies (select, insert, update, delete), ein CHECK-Constraint: alles nicht genutzt
+  seit Punkt 4 der Migration vom 06.08., wo Punktwert-Overrides verboten wurden
+- `delete_group()` bereinigt sie seit Soft-Delete auch nicht mehr auf
+- Tabelle komplett entfernt, samt Policies
+
+**Open nach Migration 38:** Execution im Supabase-Dashboard nötig.
