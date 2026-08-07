@@ -654,3 +654,15 @@ Aggregat je Partner überführen.
 - `handleDeletePartner` setzte `partner` auf `null`, wenn der Haupt-Partner gelöscht wurde.
   Die Übersicht zeigte dann „Meine Gruppen", obwohl noch weitere Partner existierten — jetzt
   wird auf den nächsten verbleibenden gewechselt
+
+## Fix: „Ohne Aufforderung"-Schalter war praktisch unauffindbar (2026-08-07)
+- Der Schalter existierte, stand im Punktevergeben-Screen aber **hinter allen 34
+  Kategorie-Karten**. Nach der Auswahl einer der oberen Aufgaben hätte man an rund 30 Karten
+  vorbeiscrollen müssen, um ihn zu sehen
+- Verschoben in den Footer, direkt über den Speichern-Button: dort erscheint er in dem
+  Moment, in dem eine passende Kategorie gewählt wird, und ist ohne Scrollen sichtbar
+- Aktiver Zustand jetzt durchgehend in `COLORS.gold` (Rahmen und Schalter), passend zum
+  goldenen Blitz — vorher war der Schalter terrakottafarben und damit nicht vom normalen
+  Aktionszustand zu unterscheiden
+- Unverändert: Der Schalter erscheint nur bei Haushalt und Mental Load
+  (`multiplier_eligible`), so wie im Balancing-Konzept festgelegt — 20 der 34 Aufgaben

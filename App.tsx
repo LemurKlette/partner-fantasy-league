@@ -1558,11 +1558,22 @@ export default function App() {
             <Text style={s.pts}>+{cat.points}</Text>
           </TouchableOpacity>
         ))}
+        <Text style={[s.sectionLabel, { marginTop: 12 }]}>Notiz (optional)</Text>
+        <TextInput style={[s.input, { height: 80, textAlignVertical: 'top' }]}
+          placeholder="Was hat er besonders gut gemacht?"
+          value={note} onChangeText={setNote} multiline />
+      </ScrollView>
+      <View style={s.footer}>
+        {/* Der Schalter sitzt bewusst hier und nicht in der Liste: dort stand
+            er hinter allen 34 Kategorie-Karten und war nach der Auswahl einer
+            der oberen Aufgaben praktisch nicht auffindbar. Im Footer erscheint
+            er direkt ueber dem Speichern-Button, sobald eine passende
+            Kategorie gewaehlt ist. */}
         {selectedCategory?.multiplier_eligible && (
           <TouchableOpacity
             style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-              backgroundColor: COLORS.surface, borderWidth: 1,
-              borderColor: withoutRequest ? COLORS.terracotta : COLORS.sandDeep, borderRadius: 10, padding: 14, marginTop: 8 }}
+              alignSelf: 'stretch', backgroundColor: COLORS.surface, borderWidth: 1,
+              borderColor: withoutRequest ? COLORS.gold : COLORS.sandDeep, borderRadius: 10, padding: 12 }}
             onPress={() => setWithoutRequest(!withoutRequest)}>
             <View style={[s.iconRow, { flex: 1, marginRight: 8 }]}>
               {/* Blitz in Gold, damit der Bonus optisch heraussticht. */}
@@ -1573,18 +1584,11 @@ export default function App() {
                 <Text style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>×1,5 Punkte, wenn er von selbst dran gedacht hat</Text>
               </View>
             </View>
-            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: withoutRequest ? COLORS.terracotta : COLORS.sandDeep, padding: 3, justifyContent: 'center' }}>
+            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: withoutRequest ? COLORS.gold : COLORS.sandDeep, padding: 3, justifyContent: 'center' }}>
               <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.surface, marginLeft: withoutRequest ? 18 : 0 }} />
             </View>
           </TouchableOpacity>
         )}
-
-        <Text style={[s.sectionLabel, { marginTop: 12 }]}>Notiz (optional)</Text>
-        <TextInput style={[s.input, { height: 80, textAlignVertical: 'top' }]}
-          placeholder="Was hat er besonders gut gemacht?"
-          value={note} onChangeText={setNote} multiline />
-      </ScrollView>
-      <View style={s.footer}>
         {loading ? <ActivityIndicator /> : (
           <TouchableOpacity style={[s.btn, !selectedCategory && s.btnDisabled]} onPress={handleSavePoints} disabled={!selectedCategory}>
             <Text style={s.btnText}>
