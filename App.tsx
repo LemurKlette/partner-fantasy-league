@@ -23,7 +23,10 @@ import { CATEGORY_COLORS, CATEGORY_TAG_TO_KEY, COLORS, type CategoryKey } from '
 import { CUSTOM_CATEGORY_ICON_CHOICES, ICON_SIZE, ICONS, iconFor, type IconKey } from './theme/icons';
 
 type Partner = { id: string; name: string; avatar_url?: string | null };
-type Group = { id: string; name: string; invite_code: string; created_by: string };
+// created_by ist nullable: loescht die Erstellerin ihr Konto, bleibt die
+// Gruppe ohne Urheberin bestehen, damit die Eintraege der anderen
+// Mitglieder ihre Badge-Punkte behalten.
+type Group = { id: string; name: string; invite_code: string; created_by: string | null };
 type GroupMember = { user_id: string; partner: Partner | null };
 type GroupPartnerPreview = { id: string; name: string; avatar_url: string | null };
 type Category = { id: string; name: string; points: number; icon_key: string | null; is_global: boolean; tier: number | null; multiplier_eligible: boolean; category_tag: string | null };
@@ -273,8 +276,12 @@ export default function App() {
   }
 
   async function loadGroups(session: Session) {
-    const { data, error } = await supabase.from('group_members').select('groups(id, name, invite_code, created_by)')
-      .eq('user_id', session.user.id);
+    // !inner + Filter auf deleted_at: weich geloeschte Gruppen verschwinden
+    // aus der Uebersicht, ihre Punkte zaehlen aber weiter fuer die Badges.
+    const { data, error } = await supabase.from('group_members')
+      .select('groups!inner(id, name, invite_code, created_by, deleted_at)')
+      .eq('user_id', session.user.id)
+      .is('groups.deleted_at', null);
     if (failed('Gruppen konnten nicht geladen werden', error)) return;
     const gs = ((data ?? []) as any[]).map(r => r.groups).filter(Boolean) as Group[];
     setGroups(gs);
@@ -765,7 +772,7 @@ export default function App() {
   async function handleDeleteGroup(groupId: string, groupName: string) {
     Alert.alert(
       'Gruppe löschen',
-      `"${groupName}" wirklich löschen? Alle Punkte, Kategorien und Mitgliedschaften dieser Gruppe werden unwiderruflich gelöscht.`,
+      `"${groupName}" wirklich löschen? Die Gruppe verschwindet für alle Mitglieder. Bereits verdiente Badges und Punktestände der Partner bleiben erhalten.`,
       [
         { text: 'Abbrechen', style: 'cancel' },
         {
@@ -1654,7 +1661,7 @@ export default function App() {
             { icon: ICONS.navSettings, title: 'Feste Punktwerte', text: 'Die Punktwerte der Standard-Aufgaben sind fest an ihre Aufwandsstufe gebunden und lassen sich nicht ändern — nur so bleiben eure Ergebnisse mit anderen Gruppen vergleichbar. Über "Eigene Kategorien" verwaltest du die selbst erfundenen Aufgaben.' },
             { icon: ICONS.helpCustomCategory, title: 'Eigene Kategorie', text: 'Erfinde eigene Aufgaben und wähle dafür eine der fünf Aufwandsstufen (2/5/10/20/40 Punkte) — kein freies Zahlenfeld mehr, damit die Werte fair und vergleichbar bleiben.' },
             { icon: ICONS.badgeSeasonWinner, title: 'Badges deines Partners ansehen', text: 'Tippe in "Meine Gruppen" auf seinen Namen — du siehst dieselbe Badge-Übersicht wie er selbst: Meilensteine, Kategorie-Spezialisten, Konsistenz-Serien, Saisontitel und versteckte Erfolge.' },
-            { icon: ICONS.actionDelete, title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link.' },
+            { icon: ICONS.actionDelete, title: 'Gruppe löschen', text: 'Nur die Erstellerin einer Gruppe kann sie löschen — auf der Gruppenkarte in "Meine Gruppen" findest du dafür einen Löschen-Link. Die Gruppe verschwindet dann für alle, die bereits verdienten Badges und Punktestände der Partner bleiben aber bestehen.' },
           ].map(item => (
             <View key={item.title} style={s.card}>
               <View style={[s.iconRow, { marginBottom: 6 }]}>
@@ -1704,7 +1711,7 @@ export default function App() {
             { q: 'Kann ich eine Gruppe wieder verlassen?', a: 'Ja — auf der Gruppenkarte in der Übersicht. Dein Partner verschwindet dann aus dem Ranking dieser Gruppe, die bisherigen Punkte bleiben als Historie erhalten. Hast du die Gruppe selbst erstellt, kannst du sie nur löschen.' },
             { q: 'Kann ich Punkte für andere Partner vergeben?', a: 'Nein. Jede Nutzerin vergibt Punkte nur für ihren eigenen Partner. Fairplay.' },
             { q: 'Was passiert, wenn ich den Einladungscode teile?', a: 'Jede Person, die den Code eingibt, tritt der Gruppe bei. Also nur an Vertrauenswürdige weitergeben — oder an Frauen, die du besiegen willst.' },
-            { q: 'Kann ich eine Gruppe löschen?', a: 'Nur wenn du sie erstellt hast — dann findest du einen "Gruppe löschen"-Link auf der Gruppenkarte in "Meine Gruppen".' },
+            { q: 'Kann ich eine Gruppe löschen?', a: 'Nur wenn du sie erstellt hast — dann findest du einen "Gruppe löschen"-Link auf der Gruppenkarte in "Meine Gruppen". Die Gruppe verschwindet für alle Mitglieder, die Badges und Punktestände der Partner bleiben davon unberührt.' },
             { q: 'Wie lösche ich meinen Account?', a: 'In "Profil & Einstellungen" unten auf "Konto löschen" tippen. Achtung: alle Daten werden unwiderruflich gelöscht.' },
           ].map(item => (
             <View key={item.q} style={s.card}>

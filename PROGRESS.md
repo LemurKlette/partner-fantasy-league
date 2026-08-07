@@ -579,3 +579,37 @@ eine einzige echte Handlung, weit unterhalb jedes Deckels.
   „Der Hellseher", …), da auch sie nur noch Einträge der besten Gruppe sehen
 - FAQ nachgezogen
 - Migration: `supabase/migrations/20260804_32_badge_points_best_group.sql`
+
+## Bugfix: Gruppe löschen zerstörte verdiente Badges (2026-08-07)
+- **Fehler:** `delete_group()` löschte hart. Zwei Zeilen waren dafür verantwortlich —
+  `delete from partner_badges where group_id = ...` entfernte **bereits verdiente Badges
+  direkt**, `delete from point_entries where group_id = ...` entzog die Punkte vom
+  Badge-Konto. Ein Partner mit 1.000 Punkten (davon 300 aus Gruppe X) stand nach dem Löschen
+  von X bei 700 und verlor dadurch erreichte Meilensteine
+- **Zusätzlich gefunden:** `delete_account()` hatte dasselbe Muster in einer Schleife über
+  die selbst erstellten Gruppen — dort traf es sogar die Partner *anderer* Nutzerinnen
+- **Lösung: Soft-Delete.** Neue Spalte `groups.deleted_at`; beim Löschen wird nur noch
+  markiert. `point_entries` und `partner_badges` werden nicht mehr angefasst, die
+  Badge-Summen ändern sich also um exakt null
+- Gelöschte Gruppen werden überall ausgeblendet: Gruppenübersicht (`!inner` + Filter auf
+  `deleted_at`), `join_group_by_invite_code()` und die Saisontitel-Vergabe
+- `groups.created_by` ist jetzt nullable: löscht die Erstellerin ihr Konto, bleibt die
+  Gruppe ohne Urheberin bestehen, damit die Einträge der übrigen Mitglieder ihre
+  Badge-Punkte behalten
+- Dialogtext und Hilfe korrigiert — sie versprachen „unwiderruflich gelöscht", was jetzt
+  nicht mehr stimmt
+- Migration: `supabase/migrations/20260804_33_soft_delete_groups.sql`
+
+### Zur Frage nach der Doppelzählung beim Wiederherstellen
+Das im Auftrag skizzierte Flag `already_applied_to_badges` ist mit diesem Ansatz nicht nötig
+und wäre sogar schädlich. Die Doppelzählung könnte nur entstehen, wenn beim Löschen etwas
+abgezogen und beim Wiederherstellen erneut addiert würde. Beim Soft-Delete wird nie etwas
+abgezogen — es wird lediglich ein Sichtbarkeits-Flag umgelegt. Ein Wiederherstellen wäre
+schlicht `update groups set deleted_at = null` und rechnerisch ein No-Op.
+
+### Bewusster Kompromiss
+Die Daten einer gelöschten Gruppe bleiben in der Datenbank liegen. Das ist die direkte
+Konsequenz aus der Anforderung „lebenslanges Erfolgskonto" — beides gleichzeitig geht nicht.
+Für die Nutzerinnen ist die Gruppe vollständig verschwunden. Sollte später echtes Löschen
+nötig werden (z.B. wegen einer Löschauskunft), müsste man die Punkte vorher in ein
+Aggregat je Partner überführen.
