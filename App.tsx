@@ -908,7 +908,9 @@ export default function App() {
     const effectivePartnerId = selectedPartnerIdForPoints ?? partner!.id;
     const effectivePartnerName = myAllPartners.find(p => p.id === effectivePartnerId)?.name ?? partner?.name ?? '';
     const applyMultiplier = withoutRequest && selectedCategory.multiplier_eligible;
-    const requestedPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
+    // Nur fuer die Rueckmeldung unten: der verbindliche Wert wird
+    // serverseitig aus der Kategorie abgeleitet und zurueckgegeben.
+    const expectedPoints = applyMultiplier ? Math.ceil(selectedCategory.points * 1.5) : selectedCategory.points;
     setLoading(true);
     // Ueber die RPC statt direktem Insert: sie legt bei Bedarf die
     // Gruppenzugehoerigkeit des Partners mit an, und zwar atomar -- sonst
@@ -917,7 +919,6 @@ export default function App() {
       p_partner_id: effectivePartnerId,
       p_group_id: selectedGroup!.id,
       p_category_id: selectedCategory.id,
-      p_points: requestedPoints,
       p_note: note.trim() || null,
       p_without_request: applyMultiplier,
     });
@@ -934,7 +935,7 @@ export default function App() {
       ]);
       await checkAndAwardBadges(effectivePartnerId, selectedGroup!.id);
       const data = { points: result?.awarded_points, capped_reason: result?.cap_reason };
-      const awarded = data?.points ?? requestedPoints;
+      const awarded = data?.points ?? expectedPoints;
       if (data?.capped_reason === 'daily_limit') {
         Alert.alert(
           'Tageslimit erreicht',
@@ -944,8 +945,8 @@ export default function App() {
         );
       } else if (data?.capped_reason === 'task_repeat') {
         Alert.alert('Schon zweimal heute', 'Diese Aufgabe wurde heute bereits zweimal eingetragen und zählt deshalb nicht mehr.');
-      } else if (awarded < requestedPoints) {
-        Alert.alert('Gespeichert!', `${awarded} statt ${requestedPoints} Punkte für ${effectivePartnerName} – dieselbe Aufgabe gab es heute schon einmal.`);
+      } else if (awarded < expectedPoints) {
+        Alert.alert('Gespeichert!', `${awarded} statt ${expectedPoints} Punkte für ${effectivePartnerName} – dieselbe Aufgabe gab es heute schon einmal.`);
       } else {
         Alert.alert('Gespeichert!', `${awarded} Punkte für ${effectivePartnerName} vergeben.`);
       }

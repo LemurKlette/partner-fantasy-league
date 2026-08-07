@@ -736,3 +736,74 @@ Migration: `supabase/migrations/20260804_36_cleanup_rename_orphans.sql`
 - `set_my_timezone()` und `connect_to_partner()` schreiben die Spalte nicht mehr; beide
   werden vor dem Drop neu angelegt, damit sie nie auf eine fehlende Spalte verweisen
 - `profiles` bleibt bestehen — `timezone` wird von der Anti-Farming-Logik aktiv genutzt
+
+---
+
+# Audit-Punkte 1 und 2: serverseitige Punktwerte + Indizes (2026-08-07)
+
+Migration: `supabase/migrations/20260804_37_server_side_points_and_indexes.sql`
+
+**Rahmenbedingung:** Minuspunkte sollen perspektivisch als Feature dazukommen. Die Migration
+ist deshalb bewusst so gebaut, dass sie dem nicht im Weg steht — Details unten.
+
+## 1 – Der Client bestimmte den Punktwert selbst
+- `add_point_entry()` übernahm `p_points` ungeprüft. Der Publishable Key steckt im App-Bundle,
+  wer die API direkt anspricht konnte „Müll rausbringen" (Tier 1, 2 Punkte) mit 80 Punkten
+  buchen. Ebenso ließ sich `p_without_request` für Romantik und Verlässlichkeit erzwingen,
+  obwohl der ×1,5-Bonus dort laut Konzept nicht gilt — und darüber „Der Hellseher" farmen
+- **Die Absicherung sitzt im Trigger, nicht in der RPC.** Beim Umsetzen zeigte sich, dass die
+  RPC gar nicht die einzige Tür ist: die INSERT-Policy auf `point_entries` erlaubt auch direkte
+  Inserts (sie prüft nur Gruppe und eigenen Partner). Ein Fix nur in der RPC hätte das Loch
+  offen gelassen. `apply_point_entry_rules()` ist der einzige Punkt, an dem jeder Eintrag
+  vorbeimuss — dort wird `points` jetzt aus `point_categories.points` abgeleitet und
+  `without_request` auf `multiplier_eligible` reduziert
+- Gespeichert wird der **wirksame** Bonus-Wert, nicht der gewünschte. Sonst trüge ein Eintrag
+  das Blitz-Symbol im Log und zählte für „Der Hellseher", ohne dass der Bonus je griff
+- Damit ist auch `p_category_id` abgesichert: archivierte Kategorien und Kategorien aus fremden
+  Gruppen werden jetzt abgewiesen statt akzeptiert
+- `p_points` ist aus der RPC-Signatur entfallen — ein wirkungsloser Parameter lädt zu genau der
+  Annahme ein, die der Fix beseitigt. **Achtung:** dadurch ändert sich die Signatur, ein alter
+  App-Build läuft nach der Migration in „function add_point_entry(...) does not exist"
+- Client sendet keinen Punktwert mehr; `expectedPoints` dient nur noch der Rückmeldung
+
+## 2 – Kein einziger Index im Projekt
+- Bestätigt: in 36 Migrationen kam `create index` kein einziges Mal vor. Postgres indiziert
+  Primärschlüssel und Unique-Constraints, **Fremdschlüssel ausdrücklich nicht**
+- 12 Indizes ergänzt. Die wichtigsten: `group_members(user_id)` und `partners(owner_user_id)` —
+  beide werden über `get_my_group_ids()` / `get_my_partner_ids()` von fast jeder RLS-Policy
+  aufgerufen, also bei praktisch jeder Abfrage; und
+  `point_entries(partner_id, group_id, created_at)` für die zwei Trigger-Abfragen bei *jedem*
+  Insert, die mit führendem `partner_id` auch `partner_capped_entries()`,
+  `partner_point_totals()` und `partner_point_history()` mitbedient
+- Bewusst weggelassen, wo ein Unique-Constraint die führende Spalte schon abdeckt:
+  `partner_badges(partner_id)` und `group_partner_memberships(group_id)` wären redundant gewesen
+- Ohne `concurrently`: das läuft nicht in einer Transaktion, der SQL-Editor im Dashboard
+  klammert aber. Bei der aktuellen Datenmenge dauert der Aufbau ohnehin Millisekunden
+- Abschließendes `analyze`, sonst nutzt der Planer die Indizes womöglich erst nach dem
+  nächsten Autovacuum
+
+## Vorbereitung auf Minuspunkte
+- **Kein `check (points >= 0)`.** Das wäre der naheliegende Weg gewesen, den im Audit
+  gemeldeten Negativwert zu blocken — er müsste fürs Feature aber sofort wieder fallen.
+  Stattdessen wird der Wert gar nicht mehr vom Client übernommen: das Vorzeichen ist damit eine
+  Eigenschaft der *Daten*. Eine künftige Strafkategorie trägt schlicht einen negativen
+  `points`-Wert, alles andere greift ohne weitere Änderung
+- Die Anti-Farming-Regeln kappen ausschließlich nach oben und sind explizit auf positive
+  Einträge begrenzt (`if NEW.points <= 0 then return NEW`). Ohne diese Grenze würde eine Strafe
+  bei ausgeschöpftem Tageslimit stillschweigend auf 0 gesetzt
+- Das Tagesbudget zählt nur positive Einträge (`sum(points) filter (where points > 0)`), sonst
+  gäbe eine Strafe von −10 am selben Tag 10 Punkte Kappungsspielraum zurück — ein Farming-Weg
+- Die Wiederholungszählung ignoriert Einträge mit negativem Wert: eine Strafe darf die
+  Halbierungsstufe einer Aufgabe nicht verbrauchen
+- Heute ändert all das nichts, da alle Kategorien positive Werte haben — die Zweige liegen
+  brach, bis das Feature kommt
+
+### Beim Feature noch zu entscheiden (bewusst nicht vorweggenommen)
+- `point_categories_points_tier_check` bindet `points` fest an `tier` (1–5 = 2/5/10/20/40).
+  Eine Strafkategorie braucht eine eigene Stufe oder eine Ausnahme über ein Flag
+- `delete_point_entry()` entfernt die Gruppenzugehörigkeit, sobald die Punktsumme ≤ 0 fällt.
+  Mit Minuspunkten könnte ein Partner dadurch aus dem Ranking verschwinden, obwohl er Einträge
+  hat — dann sollte die Bedingung auf „keine Einträge mehr" wechseln
+- `partner_capped_entries()` wählt pro Tag die punktstärkste Gruppe fürs Badge-Konto. Ob
+  Strafen dort mitzählen — und ob sie ein bereits verdientes Badge wieder entziehen können —
+  ist eine Produktentscheidung
