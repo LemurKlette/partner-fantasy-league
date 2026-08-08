@@ -10,6 +10,15 @@ Die Abschnitte darunter stehen chronologisch, der jüngste ganz unten.
 
 ---
 
+## Aktueller Stand (2026-08-08 – EAS-Testbuilds)
+
+**Gerade gemacht:** EAS eingerichtet (`eas.json`, Profile development/preview/production),
+Package-Name markenneutral auf `com.powercouples.app` (letzter Zeitpunkt vor dem ersten
+Store-Upload, danach unveränderlich), Projekt als `@lemurklette/power-couples` verknüpft.
+Migration 37 ist im Dashboard ausgeführt.
+
+**Nächster Schritt:** `eas build -p android --profile preview` für die Test-APK.
+
 ## Aktueller Stand (2026-08-07 – Abend, Vorbereitung Testlauf)
 
 **Gerade gemacht:** Robustheit für den Testlauf:
@@ -31,8 +40,9 @@ RPC durchgereicht). Für den Testlauf hingenommen, siehe „Nächste Schritte".
 Kategorie abgeleitet (Trigger, nicht RPC), und das Projekt hat erstmals Indizes.
 Migration 37. Davor: Aufräum-Audit 6/7/8/10 (Migration 36, ausgeführt).
 
-**Noch auszuführen:** Migration 37 im Supabase-Dashboard. Achtung, die Signatur von
-`add_point_entry()` ändert sich (`p_points` entfällt) — der App-Build muss dazu passen.
+**Ausgeführt** (Stand 08.08.): Migration 37 ist im Supabase-Dashboard durch. Die Signatur von
+`add_point_entry()` hat sich dabei geändert (`p_points` entfällt) — jeder App-Build muss dazu
+passen.
 
 **Offen aus dem Audit vom 07.08.** (Punkte 1, 2, 3, 5, 6, 7, 8, 10 sind erledigt):
 
@@ -997,3 +1007,38 @@ es wäre die dritte Signaturänderung an derselben RPC an einem Tag.
 ## Pakete
 - `@react-native-async-storage/async-storage` (Sitzung, Cache, Warteschlange)
 - `@react-native-community/netinfo` (Verbindungsrückkehr erkennen)
+
+---
+
+# EAS-Testbuilds eingerichtet (2026-08-08)
+
+Ziel ist eine installierbare APK für den Testlauf, ohne Play-Store-Eintrag. Dafür `eas.json`
+mit drei Profilen: `development` (Dev-Client), `preview` (interne Verteilung, Android als APK
+statt AAB — nur so lässt sich die Datei direkt aufs Gerät ziehen), `production` (Store, AAB,
+`autoIncrement`). `appVersionSource: "remote"` — die Buildnummer zählt EAS hoch, nicht die
+Datei, sonst kollidieren parallele Builds.
+
+## Package-Name markenneutral gemacht
+`android.package` und `ios.bundleIdentifier` von `com.lemurklette.powercouples` auf
+`com.powercouples.app`, Slug auf `power-couples`. **Der Zeitpunkt war der letzte mögliche:**
+Nach dem ersten Upload in den Play Store ist der Package-Name dauerhaft unveränderlich —
+danach hätte es einen neuen Store-Eintrag und den Verlust aller Bewertungen bedeutet.
+Da noch kein Build existierte, war die Änderung kostenlos.
+
+Geprüft, wo der Name sonst noch klebt: kein `android/`- oder `ios/`-Ordner (reiner Managed
+Workflow, EAS erzeugt die nativen Projekte beim Build aus `app.json`), keine
+`google-services.json` (Firebase wäre an den Package-Namen gebunden und müsste in der Console
+neu erzeugt werden), kein `scheme` und keine Redirect-URLs — Supabase läuft über
+E-Mail/Passwort mit `detectSessionInUrl: false`, es zeigt also keine URL auf den Namen.
+Die Änderung in `app.json` war damit vollständig.
+
+Das Feld `owner: "lemurklette"` bleibt bestehen — das ist der Expo-Account, nicht der
+Package-Name; ohne ihn findet EAS das Projekt nicht.
+
+## Projekt verknüpft
+`eas init` legte `extra.eas.projectId` an (`9f35b16f-…`, Projekt `@lemurklette/power-couples`).
+Stolperstelle: Ein erster Versuch ohne TTY brach mit „Project does not exist" ab — EAS legt
+ein Projekt nicht ohne Rückfrage an, damit ein vertippter Slug nicht stillschweigend ein
+zweites Projekt erzeugt. `--force` bestätigt das Anlegen nicht-interaktiv.
+
+**Nächster Schritt:** `eas build -p android --profile preview`.
