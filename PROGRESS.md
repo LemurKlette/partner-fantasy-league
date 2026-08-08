@@ -1042,3 +1042,23 @@ ein Projekt nicht ohne Rückfrage an, damit ein vertippter Slug nicht stillschwe
 zweites Projekt erzeugt. `--force` bestätigt das Anlegen nicht-interaktiv.
 
 **Nächster Schritt:** `eas build -p android --profile preview`.
+
+## EAS Update nachgerüstet (2026-08-08)
+
+`expo-updates` (~29.0.19, passend zu SDK 54) plus `eas update:configure`. Grund: Ohne das
+Paket deklarierte das `preview`-Profil zwar einen Kanal, es gab aber keinen — jede
+JS-Korrektur während des Testlaufs hätte einen neuen Build und eine Neuinstallation auf jedem
+Testgerät bedeutet. Mit Updates lässt sich ein Fix per `eas update` nachschieben, die Testerin
+bekommt ihn beim nächsten App-Start.
+
+Geschrieben wurden `updates.url` (`https://u.expo.dev/<projectId>`), `runtimeVersion`
+und ein `channel` im development-Profil.
+
+**`runtimeVersion` steht auf der Policy `appVersion`,** ist derzeit also `1.0.0`. Das ist die
+Sollbruchstelle: Ein Update erreicht nur Installationen mit derselben Runtime-Version. Wird
+`version` in `app.json` hochgezaehlt, laufen die bereits verteilten Test-APKs ins Leere — sie
+bekommen stillschweigend nichts mehr. Waehrend des Testlaufs die Version daher **nicht**
+anfassen; erst mit der naechsten verteilten APK zusammen erhoehen.
+
+Ebenso wichtig: Updates transportieren nur JavaScript und Assets. Alles Native — ein neues
+Paket, geaenderte Berechtigungen, App-Icon — braucht weiterhin einen Build.
