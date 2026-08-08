@@ -146,8 +146,8 @@ er zeigt auf die richtige.
 |---|---|---|
 | `add_point_entry(uuid, uuid, uuid, text, boolean)` | 37 | 1 |
 | `apply_point_entry_rules()` | 37 | 4 |
-| `award_badges_for_partner(uuid)` | 38 | 1 |
-| `award_period_title(text)` | 33 | 3 |
+| `award_badges_for_partner(uuid, uuid)` | 38 | 1 |
+| `award_period_title(text)` | 38 | 4 |
 | `connect_to_partner(text)` | 36 | 3 |
 | `delete_account()` | 36 | 4 |
 | `delete_custom_category(uuid)` | 27 | 1 |
@@ -168,6 +168,7 @@ er zeigt auf die richtige.
 | `sql_month_key(timestamptz)` | 38 | 1 |
 | `sql_week_key(timestamptz)` | 38 | 1 |
 | `sql_year_key(timestamptz)` | 38 | 1 |
+| `trg_award_badges()` | 38 | 1 |
 
 Entfernt: `set_woman_role()` (in 36), `add_point_entry(uuid, uuid, uuid, integer, text, boolean)` (in 37)
 
